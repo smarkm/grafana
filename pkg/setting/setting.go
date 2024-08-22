@@ -227,6 +227,7 @@ type Cfg struct {
 	// Security
 	DisableInitAdminCreation          bool
 	DisableBruteForceLoginProtection  bool
+	LoginMaxAttemps                   int
 	CookieSecure                      bool
 	CookieSameSiteDisabled            bool
 	CookieSameSiteMode                http.SameSite
@@ -1004,7 +1005,7 @@ func readSecuritySettings(iniFile *ini.File, cfg *Cfg) error {
 	SecretKey = valueAsString(security, "secret_key", "")
 	DisableGravatar = security.Key("disable_gravatar").MustBool(true)
 	cfg.DisableBruteForceLoginProtection = security.Key("disable_brute_force_login_protection").MustBool(false)
-
+	cfg.LoginMaxAttemps = security.Key("login_max_attempts").MustInt(5)
 	CookieSecure = security.Key("cookie_secure").MustBool(false)
 	cfg.CookieSecure = CookieSecure
 

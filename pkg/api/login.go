@@ -204,7 +204,30 @@ func (hs *HTTPServer) LoginPost(c *models.ReqContext, cmd dtos.LoginCommand) res
 	err := bus.Dispatch(authQuery)
 	authModule = authQuery.AuthModule
 	if err != nil {
-		resp = response.Error(401, "Invalid username or password", err)
+		if strings.HasPrefix(err.Error(), "too many") {
+			getUser := models.GetUserByLoginQuery{LoginOrEmail: cmd.User}
+			err2 := bus.Dispatch(&getUser)
+			if err2 != nil {
+				log.Error("Failed to get user", "error", err)
+			} else {
+				if getUser.Result != nil {
+					user = getUser.Result
+					updateUserCmd := models.DisableUserCommand{UserId: user.Id, IsDisabled: true}
+					err2 = bus.Dispatch(&updateUserCmd)
+					if err2 != nil {
+						log.Error("Failed to disable user", "error", err)
+					}
+				}
+			}
+			resp = response.Error(401, "Too many invalid password attemped, account is locked", err)
+		} else {
+			if errors.Is(err, login.ErrUserDisabled) {
+				hs.log.Warn("User is disabled", "user", cmd.User)
+				resp = response.Error(401, "User is disabled", err)
+				return resp
+			}
+			resp = response.Error(401, "Invalid username or password", err)
+		}
 		if errors.Is(err, login.ErrInvalidCredentials) || errors.Is(err, login.ErrTooManyLoginAttempts) || errors.Is(err,
 			models.ErrUserNotFound) {
 			return resp
