@@ -16,6 +16,7 @@ var validateLoginAttempts = func(query *models.LoginUserQuery) error {
 	if query.Cfg.DisableBruteForceLoginProtection {
 		return nil
 	}
+	maxInvalidLoginAttempts = int64(query.Cfg.LoginMaxAttemps)
 
 	loginAttemptCountQuery := models.GetUserLoginAttemptCountQuery{
 		Username: query.Username,
