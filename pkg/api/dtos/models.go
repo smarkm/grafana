@@ -22,6 +22,8 @@ type LoginCommand struct {
 	User     string `json:"user" binding:"Required"`
 	Password string `json:"password" binding:"Required"`
 	Remember bool   `json:"remember"`
+	OTP      string `json:"otp"`
+	Code     string `json:"code"`
 }
 
 type CurrentUser struct {
