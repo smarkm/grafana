@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OTP Verification</title>
+    <link href="bootstrap.min.css" rel="stylesheet">
+    <style>
+        .otp-container {
+            max-width: 400px;
+            margin: 50px auto;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .otp-input {
+            width: 100%;
+            margin: 10px 0;
+        }
+        body {
+            background: url(img/login_background_dark.svg) center center / cover no-repeat rgb(0, 0, 0);
+            min-height: 100vh;
+            min-width: 100%;
+            margin-left: 0px;
+            display: flex;
+            flex-direction: column;
+            -webkit-box-align: center;
+            align-items: center;
+            -webkit-box-pack: center;
+            justify-content: center;
+            color: white;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <div class="otp-container">
+            <h2 class="text-center">OTP Verification</h2>
+            <form>
+                <div class="form-group">
+                    <label for="otp">OTP already send to your email</label>
+                    <input type="text" class="form-control otp-input" id="otp" placeholder="otp code" required>
+                </div>
+                <button type="button" class="btn btn-primary btn-block" onclick="verifyOTP()">Verify OTP</button>
+            </form>
+        </div>
+        <div><a href="https://ossera.com" target="_blank">Powered By OSSera OTP</a></div>
+    </div>
+
+    <script src="jquery-3.5.1.min.js"></script>
+    <script src="bootstrap.bundle.min.js"></script>
+    <script>
+        function verifyOTP() {
+            const url = new URL(window.location.href);
+            const params = new URLSearchParams(url.search);
+            const code = params.get('code');
+            const otp = $('#otp').val();
+            $.ajax({
+                url: '/loginOTP', // URL to send the request to
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ code: code, otp: otp,user:"mock",password:"mmock" }),
+                success: function (data) {          // Callback for a successful request
+                    window.location.href = "/";
+                },
+                error: function (jqXHR) { // Callback for an error
+                    if(jqXHR.status === 302) {
+                        // Get the redirection URL from the "Location" header
+                        var redirectUrl = jqXHR.getResponseHeader('Location');
+                        console.log('Redirecting to:', redirectUrl);
+
+                        // Optionally, manually redirect the user
+                        if (redirectUrl) {
+                            window.location.href = redirectUrl;
+                        }
+                    }else{
+                        alert(jqXHR.responseJSON.message);
+                    }
+                }
+            });
+
+        }
+    </script>
+</body>
+
+</html>

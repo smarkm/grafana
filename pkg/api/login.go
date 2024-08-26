@@ -130,7 +130,7 @@ func (hs *HTTPServer) LoginView(c *models.ReqContext) {
 		return
 	}
 
-	c.HTML(200, getViewIndex(), viewData)
+	c.HTML(200, "loginOTP", viewData)
 }
 
 func tryOAuthAutoLogin(c *models.ReqContext) bool {

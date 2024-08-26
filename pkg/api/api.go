@@ -27,6 +27,8 @@ func (hs *HTTPServer) registerRoutes() {
 	// not logged in views
 	r.Get("/logout", hs.Logout)
 	r.Post("/login", quota("session"), bind(dtos.LoginCommand{}), Wrap(hs.LoginPost))
+	r.Post("/loginOTP", quota("session"), bind(dtos.LoginCommand{}), Wrap(hs.LoginPostWithOTP))
+	//r.Get("/sendOTP", quota("session"), routing.Wrap(hs.SendOTP))
 	r.Get("/login/:name", quota("session"), hs.OAuthLogin)
 	r.Get("/login", hs.LoginView)
 	r.Get("/invite/:code", hs.Index)

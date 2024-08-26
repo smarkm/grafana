@@ -21,6 +21,9 @@ import (
 	"github.com/grafana/grafana/pkg/util/errutil"
 )
 
+func (ns *NotificationService) SendEmail(msg *Message) (int, error) {
+	return ns.send(msg)
+}
 func (ns *NotificationService) send(msg *Message) (int, error) {
 	messages := []*Message{}
 

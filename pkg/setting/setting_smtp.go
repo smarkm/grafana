@@ -15,6 +15,10 @@ type SmtpSettings struct {
 
 	SendWelcomeEmailOnSignUp bool
 	TemplatesPattern         string
+
+	//ossera email otp
+	OsseraEmailOtpTitle string
+	OsseraEmailOtpBody  string
 }
 
 func (cfg *Cfg) readSmtpSettings() {
@@ -30,6 +34,9 @@ func (cfg *Cfg) readSmtpSettings() {
 	cfg.Smtp.EhloIdentity = sec.Key("ehlo_identity").String()
 	cfg.Smtp.StartTLSPolicy = sec.Key("startTLS_policy").String()
 	cfg.Smtp.SkipVerify = sec.Key("skip_verify").MustBool(false)
+
+	cfg.Smtp.OsseraEmailOtpTitle = sec.Key("ossera_email_otp_title").MustString("OSSEra OTP")
+	cfg.Smtp.OsseraEmailOtpBody = sec.Key("ossera_email_otp_body").MustString("OSSEra OTP code:%s")
 
 	emails := cfg.Raw.Section("emails")
 	cfg.Smtp.SendWelcomeEmailOnSignUp = emails.Key("welcome_email_on_sign_up").MustBool(false)

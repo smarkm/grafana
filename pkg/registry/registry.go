@@ -27,7 +27,15 @@ func RegisterService(instance Service) {
 func Register(descriptor *Descriptor) {
 	services = append(services, descriptor)
 }
+func GetService(name string) *Descriptor {
+	for _, svc := range services {
+		if svc.Name == name {
+			return svc
+		}
+	}
 
+	return nil
+}
 func GetServices() []*Descriptor {
 	slice := getServicesWithOverrides()
 

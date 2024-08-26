@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login Form</title>
+    <link href="public/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            }
+        .login-container {
+            
+            margin: 50px auto;
+        }
+        .login-form {
+            color: white    ;
+            width: 500px;
+            padding: 2rem;
+            border-radius: 0.5rem;
+            background: #ffffff;
+            box-shadow: 0 0 1rem rgba(0, 0, 0, 0.1);
+            background:  0% 0% / cover rgba(18, 28, 41, 0.65);
+        }
+        .body {
+            background: url(public/img/login_background_dark.svg) center center / cover no-repeat rgb(0, 0, 0);
+            min-height: 100vh;
+            min-width: 100%;
+            margin-left: 0px;
+            display: flex;
+            flex-direction: column;
+            -webkit-box-align: center;
+            align-items: center;
+            -webkit-box-pack: center;
+            justify-content: center;
+        }
+    </style>
+</head>
+<body class="body">
+    <div class="login-container">
+        <div class="login-form">
+            <h1 class="text-center"><img src="public/img/grafana_icon.svg" style="width: 66px;"></h1>
+            <h2 class="text-center"></h2>
+            <h5 class="text-center" style="color: antiquewhite;">powered by OSSera</h5>
+            <form>
+                <div class="mb-3">
+                    <label for="user" class="form-label">Username</label>
+                    <input type="text" class="form-control" id="user" placeholder="username" required>
+                </div>
+                <div class="mb-3">
+                    <label for="password" class="form-label">Password</label>
+                    <input type="password" class="form-control" id="password" placeholder="password" required>
+                </div>
+                <!-- <div class="mb-3 form-check">
+                    <input type="checkbox" class="form-check-input" id="rememberMe">
+                    <label class="form-check-label" for="rememberMe">Remember me</label>
+                </div> -->
+                <button type="button" onclick="login()" class="btn btn-primary w-100">Login</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="public/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script>
+        function login() {
+            var username = $('#user').val();
+                var password = $('#password').val();
+
+                // Perform AJAX request
+                $.ajax({
+                    url: '/loginOTP', // Replace with your server's login URL
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ user: username, password: password }),
+                    success: function(response) {
+                        // Handle successful login
+                        console.log(response);
+                             window.location.href = response.message; // Redirect to a different page
+                    },
+                    error: function(jqXHR) {
+                        alert(jqXHR.responseJSON.message);
+                    }
+                });
+        }
+    </script>
+</body>
+</html>
