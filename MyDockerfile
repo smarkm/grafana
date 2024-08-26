@@ -1,0 +1,21 @@
+# Use CentOS 7.9 as the base image
+FROM centos:7.9.2009
+
+# Set the working directory inside the container
+WORKDIR /usr/src/app
+
+RUN sed -i 's|^mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/CentOS-Base.repo && \
+    sed -i 's|^#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-Base.repo
+
+RUN yum -y update && \
+    yum -y install git gcc make wget tar curl && \
+    yum clean all
+
+# Install Go (specify the version you need, e.g., 1.20.7)
+ENV GOLANG_VERSION 1.20.7
+RUN wget https://go.dev/dl/go${GOLANG_VERSION}.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go${GOLANG_VERSION}.linux-amd64.tar.gz && \
+    rm go${GOLANG_VERSION}.linux-amd64.tar.gz
+
+# Set Go environment variables
+ENV PATH="/usr/local/go/bin:${PATH}"
