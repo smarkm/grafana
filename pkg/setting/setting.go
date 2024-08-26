@@ -114,6 +114,7 @@ var (
 	StrictTransportSecurityMaxAge     int
 	StrictTransportSecurityPreload    bool
 	StrictTransportSecuritySubDomains bool
+	LoginMaxAttemps                   int
 
 	// Snapshots
 	ExternalSnapshotUrl   string
@@ -959,6 +960,7 @@ func readSecuritySettings(iniFile *ini.File, cfg *Cfg) error {
 	cfg.DisableBruteForceLoginProtection = security.Key("disable_brute_force_login_protection").MustBool(false)
 	DisableBruteForceLoginProtection = cfg.DisableBruteForceLoginProtection
 
+	LoginMaxAttemps = security.Key("login_max_attempts").MustInt(5)
 	CookieSecure = security.Key("cookie_secure").MustBool(false)
 	cfg.CookieSecure = CookieSecure
 
