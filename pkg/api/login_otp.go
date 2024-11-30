@@ -98,7 +98,7 @@ func (hs *HTTPServer) LoginPostWithOTP(c *models.ReqContext, cmd dtos.LoginComma
 	err := bus.Dispatch(authQuery)
 	authModule = authQuery.AuthModule
 	if err != nil {
-		if strings.HasPrefix(err.Error(), "too many") {
+		if strings.HasPrefix(err.Error(), "Too many") {
 			if user != nil {
 				updateUserCmd := models.DisableUserCommand{UserId: user.Id, IsDisabled: true}
 				err2 = bus.Dispatch(&updateUserCmd)

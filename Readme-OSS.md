@@ -20,3 +20,6 @@
 1. `docker build -t dockergrafana -f ./MyDockerfile .` run this command to build the grafana builder env, this is customized for specific os, and if your local already have this build before, just `optional`
 2. `docker run --rm -v /repo/grafana/grafana:/grafana -it dockergrafana /bin/sh`, this to start builder container, then run `cd /grafana && make build-server` to build grafana-server bin, `Note:` make sure mount your change workspace correctly
 
+## FAQ
+1. Why html related content no change, maybe cause by grafana cache the html for web present, just restart grafana to check
+2. 
