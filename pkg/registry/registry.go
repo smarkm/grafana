@@ -18,13 +18,13 @@ var services []*Descriptor
 
 func RegisterService(instance Service) {
 	services = append(services, &Descriptor{
-		Name:         reflect.TypeOf(instance).Elem().Name(),
+		Name:         reflect.TypeOf(instance).Elem().Name(), //reflect to get name
 		Instance:     instance,
 		InitPriority: Medium,
 	})
 }
 
-func Register(descriptor *Descriptor) {
+func Register(descriptor *Descriptor) { //can set priority follow RegisterService
 	services = append(services, descriptor)
 }
 func GetService(name string) *Descriptor {
@@ -122,7 +122,8 @@ func IsDisabled(srv Service) bool {
 type Priority int
 
 const (
-	High   Priority = 100
-	Medium Priority = 50
-	Low    Priority = 0
+	High       Priority = 100
+	MediumHigh Priority = 75
+	Medium     Priority = 50
+	Low        Priority = 0
 )

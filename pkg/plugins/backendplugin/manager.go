@@ -33,7 +33,11 @@ var (
 )
 
 func init() {
-	registry.RegisterService(&manager{})
+	registry.Register(&registry.Descriptor{
+		Name:         "manager",
+		InitPriority: registry.MediumHigh,
+		Instance:     &manager{},
+	})
 }
 
 // Manager manages backend plugins.
@@ -109,7 +113,6 @@ func (m *manager) Register(pluginID string, factory PluginFactoryFunc) error {
 	if err != nil {
 		return err
 	}
-
 	m.plugins[pluginID] = plugin
 	m.logger.Debug("Backend plugin registered", "pluginId", pluginID)
 	return nil
