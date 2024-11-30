@@ -129,8 +129,12 @@ func (hs *HTTPServer) LoginView(c *models.ReqContext) {
 		c.Redirect(setting.AppSubUrl + "/")
 		return
 	}
-
-	c.HTML(200, "loginOTP", viewData)
+	log.Infof("login_with_otp: %v", setting.LoginWithOTP)
+	if setting.LoginWithOTP {
+		c.HTML(200, "loginOTP", viewData)
+	} else {
+		c.HTML(200, getViewIndex(), viewData)
+	}
 }
 
 func tryOAuthAutoLogin(c *models.ReqContext) bool {
@@ -193,7 +197,31 @@ func (hs *HTTPServer) LoginPost(c *models.ReqContext, cmd dtos.LoginCommand) Res
 	err := bus.Dispatch(authQuery)
 	authModule = authQuery.AuthModule
 	if err != nil {
-		response = Error(401, "Invalid username or password", err)
+		if strings.HasPrefix(err.Error(), "Too many") {
+			getUser := models.GetUserByLoginQuery{LoginOrEmail: cmd.User}
+			err2 := bus.Dispatch(&getUser)
+			if err2 != nil {
+				hs.log.Error("Failed to get user", "error", err)
+			} else {
+				if getUser.Result != nil {
+					user = getUser.Result
+					updateUserCmd := models.DisableUserCommand{UserId: user.Id, IsDisabled: true}
+					err2 = bus.Dispatch(&updateUserCmd)
+					if err2 != nil {
+						hs.log.Error("Failed to disable user", "error", err)
+					}
+				}
+			}
+			response = Error(401, "Too many invalid password attemped, account is locked", err)
+		} else {
+			if errors.Is(err, login.ErrUserDisabled) {
+				hs.log.Warn("User is disabled", "user", cmd.User)
+				response = Error(401, "User is disabled", err)
+				return response
+			}
+			response = Error(401, "Invalid username or password", err)
+		}
+
 		if err == login.ErrInvalidCredentials || err == login.ErrTooManyLoginAttempts || err == models.ErrUserNotFound {
 			return response
 		}

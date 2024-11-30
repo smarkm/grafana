@@ -145,6 +145,7 @@ var (
 	ExternalUserMngInfo     string
 	OAuthAutoLogin          bool
 	ViewersCanEdit          bool
+	LoginWithOTP            bool
 
 	// Http auth
 	AdminUser        string
@@ -1107,6 +1108,7 @@ func readAuthSettings(iniFile *ini.File, cfg *Cfg) (err error) {
 
 func readUserSettings(iniFile *ini.File, cfg *Cfg) error {
 	users := iniFile.Section("users")
+	LoginWithOTP = users.Key("login_with_otp").MustBool(false)
 	AllowUserSignUp = users.Key("allow_sign_up").MustBool(true)
 	AllowUserOrgCreate = users.Key("allow_org_create").MustBool(true)
 	AutoAssignOrg = users.Key("auto_assign_org").MustBool(true)
