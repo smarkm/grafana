@@ -115,6 +115,7 @@ var (
 	StrictTransportSecurityPreload    bool
 	StrictTransportSecuritySubDomains bool
 	LoginMaxAttemps                   int
+	LoginTooManyAttempedTips          string
 
 	// Snapshots
 	ExternalSnapshotUrl   string
@@ -146,6 +147,7 @@ var (
 	OAuthAutoLogin          bool
 	ViewersCanEdit          bool
 	LoginWithOTP            bool
+	OTPExpiresIn            int64
 
 	// Http auth
 	AdminUser        string
@@ -962,6 +964,7 @@ func readSecuritySettings(iniFile *ini.File, cfg *Cfg) error {
 	DisableBruteForceLoginProtection = cfg.DisableBruteForceLoginProtection
 
 	LoginMaxAttemps = security.Key("login_max_attempts").MustInt(5)
+	LoginTooManyAttempedTips = security.Key("login_too_many_attemps_tips").MustString("Too many invalid passwords attempted. Your account has been locked. Please contact your Service Engineer to unlock your account.")
 	CookieSecure = security.Key("cookie_secure").MustBool(false)
 	cfg.CookieSecure = CookieSecure
 
@@ -1109,6 +1112,7 @@ func readAuthSettings(iniFile *ini.File, cfg *Cfg) (err error) {
 func readUserSettings(iniFile *ini.File, cfg *Cfg) error {
 	users := iniFile.Section("users")
 	LoginWithOTP = users.Key("login_with_otp").MustBool(false)
+	OTPExpiresIn = users.Key("otp_expires_in_minutes").MustInt64(2)
 	AllowUserSignUp = users.Key("allow_sign_up").MustBool(true)
 	AllowUserOrgCreate = users.Key("allow_org_create").MustBool(true)
 	AutoAssignOrg = users.Key("auto_assign_org").MustBool(true)

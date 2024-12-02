@@ -31,7 +31,8 @@ type OTP struct {
 }
 
 var (
-	otpMap = make(map[string]OTP)
+	otpMap     = make(map[string]OTP)
+	otpAttemps = make(map[string]int)
 )
 
 func (hs *HTTPServer) LoginPostWithOTP(c *models.ReqContext, cmd dtos.LoginCommand) Response {
@@ -46,12 +47,22 @@ func (hs *HTTPServer) LoginPostWithOTP(c *models.ReqContext, cmd dtos.LoginComma
 			return resp
 		}
 		if otp.OTP != cmd.OTP {
+			errAttempsCount, hasAttemps := otpAttemps[cmd.Code]
+			if !hasAttemps {
+				errAttempsCount = 0
+			}
+			errAttempsCount++
+			otpAttemps[cmd.Code] = errAttempsCount
+			if errAttempsCount > 3 {
+				resp = Error(401, " Too many invalid OTP attempted. Please re-login.", nil)
+				return resp
+			}
 			resp = Error(401, "Invalid OTP", nil)
 			return resp
 
 		}
 		if otp.ExpireAt.Before(time.Now()) {
-			resp = Error(401, "OTP expired", nil)
+			resp = Error(401, "OTP expired, Please re-login", nil)
 			delete(otpMap, cmd.Code)
 			return resp
 		}
@@ -103,17 +114,17 @@ func (hs *HTTPServer) LoginPostWithOTP(c *models.ReqContext, cmd dtos.LoginComma
 				updateUserCmd := models.DisableUserCommand{UserId: user.Id, IsDisabled: true}
 				err2 = bus.Dispatch(&updateUserCmd)
 				if err2 != nil {
-					hs.log.Error("Failed to disable user", "error", err)
+					hs.log.Error("Failed to disable user", "error", err, "user", cmd.User)
 				}
 			}
-			resp = Error(401, "Too many invalid password attemped, account is locked", err)
+			resp = Error(401, setting.LoginTooManyAttempedTips, errors.New("user:"+cmd.User))
 		} else {
 			if errors.Is(err, login.ErrUserDisabled) {
 				hs.log.Warn("User is disabled", "user", cmd.User)
 				resp = Error(401, "User is disabled", err)
 				return resp
 			}
-			resp = Error(401, "Invalid username or password", err)
+			resp = Error(401, "Invalid username or password", errors.New("user:"+cmd.User))
 		}
 		if errors.Is(err, login.ErrInvalidCredentials) || errors.Is(err, login.ErrTooManyLoginAttempts) || errors.Is(err,
 			models.ErrUserNotFound) {
@@ -134,7 +145,7 @@ func (hs *HTTPServer) LoginPostWithOTP(c *models.ReqContext, cmd dtos.LoginComma
 	if cmd.OTP == "" {
 		code := uuid.New().String()
 		otp := randomOTP()
-		otpMap[code] = OTP{Code: code, OTP: otp, ExpireAt: time.Now().Add(2 * time.Minute), User: cmd.User, Password: cmd.Password}
+		otpMap[code] = OTP{Code: code, OTP: otp, ExpireAt: time.Now().Add(time.Minute * time.Duration(setting.OTPExpiresIn)), User: cmd.User, Password: cmd.Password}
 		hs.log.Info("Send otp ...", "user", cmd.User, "code", code, "otp", otp, "email", user.Email)
 		if user.Email == "" {
 			hs.log.Error("No email information for send otp ", "user", user.Login)
@@ -184,7 +195,7 @@ func sendOTP(hs *HTTPServer, user *models.User, code string, otp string) bool {
 	ns := registry.GetService("NotificationService").Instance.(*notifications.NotificationService)
 	to := []string{user.Email}
 	subject := hs.Cfg.Smtp.OsseraEmailOtpTitle
-	body := fmt.Sprintf(hs.Cfg.Smtp.OsseraEmailOtpBody, otp)
+	body := fmt.Sprintf(hs.Cfg.Smtp.OsseraEmailOtpBody, user.Login, otp, setting.OTPExpiresIn)
 	msg := notifications.Message{To: to, Subject: subject, Body: body, From: hs.Cfg.Smtp.FromAddress}
 	_, err := ns.SendEmail(&msg)
 	if err != nil {

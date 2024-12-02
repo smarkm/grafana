@@ -3,8 +3,12 @@
 2. The customized version will in branch v7.3.7o for oss3ra
 
 ## Update list
-1. `login_max_attempts` under `security` section support max login attem config, default is 5 and will `disable user` if got max attempts invalid password
+1. `login_max_attempts` under `security` section support max login attem config, default is 5 and will `disable user` if got max 
+   `login_too_many_attemps_tips` under `security` section support max login attem config tips msg
+attempts invalid password
 2. `login_with_otp = true` under `users` section support OTP with email
+    `otp_expires_in_minutes` under `users` section otp code expires in minutes
+
     `ossera_email_otp_title`  under `smtp` section the OTP msg title
     `ossera_email_otp_body` the OTP msg body, use `%s` msg template will replace otp code, like "Wellcom, you otp code is :%s"
 
