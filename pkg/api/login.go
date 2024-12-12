@@ -212,7 +212,7 @@ func (hs *HTTPServer) LoginPost(c *models.ReqContext, cmd dtos.LoginCommand) Res
 					}
 				}
 			}
-			response = Error(401, "Too many invalid password attemped, account is locked", err)
+			response = Error(401, setting.LoginTooManyAttempedTips, err)
 		} else {
 			if errors.Is(err, login.ErrUserDisabled) {
 				hs.log.Warn("User is disabled", "user", cmd.User)
