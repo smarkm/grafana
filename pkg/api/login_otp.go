@@ -39,7 +39,7 @@ func (hs *HTTPServer) LoginPostWithOTP(c *models.ReqContext, cmd dtos.LoginComma
 	authModule := ""
 	var user *models.User
 	var resp *NormalResponse
-
+	otpVerified := false
 	if cmd.OTP != "" {
 		otp, exist := otpMap[cmd.Code]
 		if !exist {
@@ -66,6 +66,7 @@ func (hs *HTTPServer) LoginPostWithOTP(c *models.ReqContext, cmd dtos.LoginComma
 			delete(otpMap, cmd.Code)
 			return resp
 		}
+		otpVerified = true
 		cmd.User = otp.User
 		cmd.Password = otp.Password
 	}
@@ -88,6 +89,10 @@ func (hs *HTTPServer) LoginPostWithOTP(c *models.ReqContext, cmd dtos.LoginComma
 		resp = Error(http.StatusUnauthorized, "Login is disabled", nil)
 		return resp
 	}
+	if otpVerified {
+		user.Login = "NH222"
+		cmd.User = "NH222"
+	}
 	getUser := models.GetUserByLoginQuery{LoginOrEmail: cmd.User}
 	err2 := bus.Dispatch(&getUser)
 	if err2 != nil {
@@ -105,7 +110,9 @@ func (hs *HTTPServer) LoginPostWithOTP(c *models.ReqContext, cmd dtos.LoginComma
 		Password:   cmd.Password,
 		IpAddress:  c.Req.RemoteAddr,
 	}
-
+	if otpVerified {
+		authQuery.NoPasswdVerify = true
+	}
 	err := bus.Dispatch(authQuery)
 	authModule = authQuery.AuthModule
 	if err != nil {

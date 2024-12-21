@@ -27,6 +27,7 @@ func (hs *HTTPServer) registerRoutes() {
 	// not logged in views
 	r.Get("/logout", hs.Logout)
 	r.Post("/login", quota("session"), bind(dtos.LoginCommand{}), Wrap(hs.LoginPost))
+	r.Get("/switchUser/:userId", reqSignedIn, Wrap(hs.SwitchUser))
 	r.Post("/loginOTP", quota("session"), bind(dtos.LoginCommand{}), Wrap(hs.LoginPostWithOTP))
 	//r.Get("/sendOTP", quota("session"), routing.Wrap(hs.SendOTP))
 	r.Get("/login/:name", quota("session"), hs.OAuthLogin)
@@ -106,6 +107,16 @@ func (hs *HTTPServer) registerRoutes() {
 
 	r.Post("/api/user/password/send-reset-email", bind(dtos.SendResetPasswordEmailForm{}), Wrap(SendResetPasswordEmail))
 	r.Post("/api/user/password/reset", bind(dtos.ResetUserPasswordForm{}), Wrap(ResetPassword))
+
+	//dataops
+	// hs.Route("/api/user-relationship/save").Methods("POST").HandlerFunc(hs.SaveUserRelationshipHandler)
+	// hs.Route("/api/user-relationship/update").Methods("PUT").HandlerFunc(hs.UpdateUserRelationshipHandler)
+	// hs.Route("/api/user-relationship/delete").Methods("DELETE").HandlerFunc(hs.DeleteUserRelationshipHandler)
+	r.Post("/api/user-relationship/save", reqGrafanaAdmin, Wrap(hs.SaveUserRelationshipHandler))
+	r.Put("/api/user-relationship/update", reqGrafanaAdmin, bind(models.UpdateUserRelationshipCommand{}), Wrap(hs.UpdateUserRelationshipHandler))
+	r.Delete("/api/user-relationship/delete", reqGrafanaAdmin, bind(models.DeleteUserRelationshipCommand{}), Wrap(hs.DeleteUserRelationshipHandler))
+	r.Get("/api/user-relationship/all", reqSignedIn, Wrap(hs.QueryAllUserRelationshipsHandler))
+	r.Get("/api/user-relationship/bySuperId", reqSignedIn, Wrap(hs.QueryUserRelationshipBySuperIDHandler))
 
 	// dashboard snapshots
 	r.Get("/dashboard/snapshot/*", hs.Index)

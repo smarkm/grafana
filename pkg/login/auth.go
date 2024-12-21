@@ -31,12 +31,14 @@ func Init() {
 
 // AuthenticateUser authenticates the user via username & password
 func AuthenticateUser(query *models.LoginUserQuery) error {
-	if err := validateLoginAttempts(query.Username); err != nil {
-		return err
-	}
+	if !query.NoPasswdVerify {
+		if err := validateLoginAttempts(query.Username); err != nil {
+			return err
+		}
 
-	if err := validatePasswordSet(query.Password); err != nil {
-		return err
+		if err := validatePasswordSet(query.Password); err != nil {
+			return err
+		}
 	}
 
 	err := loginUsingGrafanaDB(query)

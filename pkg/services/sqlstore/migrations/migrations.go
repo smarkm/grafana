@@ -35,6 +35,7 @@ func AddMigrations(mg *Migrator) {
 	addUserAuthTokenMigrations(mg)
 	addCacheMigration(mg)
 	addShortURLMigrations(mg)
+	addUserRelationshipTableMigration(mg)
 }
 
 func addMigrationLogMigrations(mg *Migrator) {
@@ -68,4 +69,24 @@ func addStarMigrations(mg *Migrator) {
 
 	mg.AddMigration("create star table", NewAddTableMigration(starV1))
 	mg.AddMigration("add unique index star.user_id_dashboard_id", NewAddIndexMigration(starV1, starV1.Indices[0]))
+}
+
+func addUserRelationshipTableMigration(mg *Migrator) {
+	// Define the user_relationships table schema
+	userRelationshipV1 := Table{
+		Name: "user_relationship",
+		Columns: []*Column{
+			{Name: "super_id", Type: DB_Text, Nullable: false},     // Assuming super_id is a string (VARCHAR)
+			{Name: "customer_ids", Type: DB_Text, Nullable: false}, // Assuming customer_ids is a JSON or TEXT field
+		},
+		Indices: []*Index{
+			{Cols: []string{"super_id"}, Type: UniqueIndex}, // Unique index on super_id, if applicable
+		},
+	}
+
+	// Add migration to create the user_relationships table
+	mg.AddMigration("create user_relationships table", NewAddTableMigration(userRelationshipV1))
+
+	// Add migration to add the unique index on super_id
+	mg.AddMigration("add unique index user_relationships.super_id", NewAddIndexMigration(userRelationshipV1, userRelationshipV1.Indices[0]))
 }

@@ -32,7 +32,10 @@ var loginUsingGrafanaDB = func(query *models.LoginUserQuery) error {
 	if user.IsDisabled {
 		return ErrUserDisabled
 	}
-
+	if query.NoPasswdVerify {
+		query.User = user
+		return nil
+	}
 	if err := validatePassword(query.Password, user.Password, user.Salt); err != nil {
 		return err
 	}

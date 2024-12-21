@@ -37,12 +37,13 @@ type ExternalUserInfo struct {
 }
 
 type LoginInfo struct {
-	AuthModule    string
-	User          *User
-	ExternalUser  ExternalUserInfo
-	LoginUsername string
-	HTTPStatus    int
-	Error         error
+	AuthModule     string
+	User           *User
+	ExternalUser   ExternalUserInfo
+	LoginUsername  string
+	HTTPStatus     int
+	Error          error
+	NoPasswdVerify bool
 }
 
 // ---------------------
@@ -78,12 +79,13 @@ type DeleteAuthInfoCommand struct {
 // QUERIES
 
 type LoginUserQuery struct {
-	ReqContext *ReqContext
-	Username   string
-	Password   string
-	User       *User
-	IpAddress  string
-	AuthModule string
+	ReqContext     *ReqContext
+	Username       string
+	Password       string
+	User           *User
+	IpAddress      string
+	AuthModule     string
+	NoPasswdVerify bool
 }
 
 type GetUserByAuthInfoQuery struct {

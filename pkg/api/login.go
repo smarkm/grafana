@@ -275,6 +275,8 @@ func (hs *HTTPServer) loginUserWithUser(user *models.User, c *models.ReqContext)
 
 	hs.log.Info("Successful Login", "User", user.Email)
 	middleware.WriteSessionCookie(c, userToken.UnhashedToken, hs.Cfg.LoginMaxLifetime)
+
+	hs.BindCustomerIDs(c, user, c.GetCookie(setting.LoginCookieName), url.QueryEscape(userToken.UnhashedToken))
 	return nil
 }
 
