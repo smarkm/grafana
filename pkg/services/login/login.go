@@ -8,6 +8,7 @@ import (
 	"github.com/grafana/grafana/pkg/models"
 	"github.com/grafana/grafana/pkg/registry"
 	"github.com/grafana/grafana/pkg/services/quota"
+	"github.com/grafana/grafana/pkg/setting"
 )
 
 func init() {
@@ -99,8 +100,10 @@ func (ls *LoginService) UpsertUser(cmd *models.UpsertUserCommand) error {
 		}
 	}
 
-	if err := syncOrgRoles(cmd.Result, extUser); err != nil {
-		return err
+	if setting.LDAPActiveSyncEnabled {
+		if err := syncOrgRoles(cmd.Result, extUser); err != nil {
+			return err
+		}
 	}
 
 	// Sync isGrafanaAdmin permission
