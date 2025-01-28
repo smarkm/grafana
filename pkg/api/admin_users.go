@@ -151,10 +151,10 @@ func AdminEnableUser(c *models.ReqContext) Response {
 	userID := c.ParamsInt64(":id")
 
 	// External users shouldn't be disabled from API
-	authInfoQuery := &models.GetAuthInfoQuery{UserId: userID}
-	if err := bus.Dispatch(authInfoQuery); err != models.ErrUserNotFound {
-		return Error(500, "Could not enable external user", nil)
-	}
+	// authInfoQuery := &models.GetAuthInfoQuery{UserId: userID}
+	// if err := bus.Dispatch(authInfoQuery); err != models.ErrUserNotFound {
+	// 	return Error(500, "Could not enable external user", nil)
+	// }
 
 	disableCmd := models.DisableUserCommand{UserId: userID, IsDisabled: false}
 	if err := bus.Dispatch(&disableCmd); err != nil {
