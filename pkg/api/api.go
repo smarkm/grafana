@@ -117,6 +117,7 @@ func (hs *HTTPServer) registerRoutes() {
 	r.Delete("/api/user-relationship/delete", reqGrafanaAdmin, bind(models.DeleteUserRelationshipCommand{}), Wrap(hs.DeleteUserRelationshipHandler))
 	r.Get("/api/user-relationship/all", reqSignedIn, Wrap(hs.QueryAllUserRelationshipsHandler))
 	r.Get("/api/user-relationship/bySuperId", reqSignedIn, Wrap(hs.QueryUserRelationshipBySuperIDHandler))
+	r.Get("/api/disclaimer", Wrap(hs.GetDisclaimer))
 
 	// dashboard snapshots
 	r.Get("/dashboard/snapshot/*", hs.Index)

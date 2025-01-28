@@ -11,6 +11,9 @@ attempts invalid password
 
     `ossera_email_otp_title`  under `smtp` section the OTP msg title
     `ossera_email_otp_body` the OTP msg body, use `%s` msg template will replace otp code, like "Wellcom, you otp code is :%s"
+3. `active_sync_enabled` skip sync role from ldap server if falsep
+4. allow config disclaimer for login page, if the file under `conf/disclaimer.txt` exist and not empty, will show the content in login page with dialog
+
 
 ## Dev
 ### OTP support
