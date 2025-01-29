@@ -1,6 +1,8 @@
 package api
 
 import (
+	"strconv"
+
 	"github.com/grafana/grafana/pkg/api/dtos"
 	"github.com/grafana/grafana/pkg/bus"
 	"github.com/grafana/grafana/pkg/models"
@@ -44,7 +46,9 @@ func ResetPassword(c *models.ReqContext, form dtos.ResetUserPasswordForm) Respon
 	if form.NewPassword != form.ConfirmPassword {
 		return Error(400, "Passwords do not match", nil)
 	}
-
+	if setting.StrongPassword && !setting.IsValidPassword(form.NewPassword) {
+		return Error(400, "Password length should max than "+strconv.Itoa(setting.PasswordMinimumLength)+" with special characters,nubmer, upper and lower case letter", nil)
+	}
 	cmd := models.ChangeUserPasswordCommand{}
 	cmd.UserId = query.Result.Id
 	var err error
