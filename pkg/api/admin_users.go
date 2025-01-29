@@ -3,11 +3,13 @@ package api
 import (
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/grafana/grafana/pkg/api/dtos"
 	"github.com/grafana/grafana/pkg/bus"
 	"github.com/grafana/grafana/pkg/infra/metrics"
 	"github.com/grafana/grafana/pkg/models"
+	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/util"
 )
 
@@ -57,6 +59,10 @@ func AdminCreateUser(c *models.ReqContext, form dtos.AdminCreateUserForm) Respon
 
 func AdminUpdateUserPassword(c *models.ReqContext, form dtos.AdminUpdateUserPasswordForm) Response {
 	userID := c.ParamsInt64(":id")
+
+	if setting.StrongPassword && !setting.IsValidPassword(form.Password) {
+		return Error(400, "Password length should max than "+strconv.Itoa(setting.PasswordMinimumLength)+" with special characters,nubmer, upper and lower case letter", nil)
+	}
 
 	if len(form.Password) < 4 {
 		return Error(400, "New password too short", nil)

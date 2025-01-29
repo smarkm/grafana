@@ -13,6 +13,8 @@ attempts invalid password
     `ossera_email_otp_body` the OTP msg body, use `%s` msg template will replace otp code, like "Wellcom, you otp code is :%s"
 3. `active_sync_enabled` skip sync role from ldap server if falsep
 4. allow config disclaimer for login page, if the file under `conf/disclaimer.txt` exist and not empty, will show the content in login page with dialog
+5. `password_minimum_length` under `users` section when `strong_password` is true, password min length will be verify the default is 8
+6. `strong_password` under `users` section when true, password will check the strong policy, like min length 8 and include number, specific, lower and upper letter
 
 
 ## Dev

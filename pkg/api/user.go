@@ -1,6 +1,8 @@
 package api
 
 import (
+	"strconv"
+
 	"github.com/grafana/grafana/pkg/api/dtos"
 	"github.com/grafana/grafana/pkg/bus"
 	"github.com/grafana/grafana/pkg/models"
@@ -235,6 +237,10 @@ func ChangeUserPassword(c *models.ReqContext, cmd models.ChangeUserPasswordComma
 	password := models.Password(cmd.NewPassword)
 	if password.IsWeak() {
 		return Error(400, "New password is too short", nil)
+	}
+
+	if setting.StrongPassword && !setting.IsValidPassword(cmd.NewPassword) {
+		return Error(400, "Password length should max than "+strconv.Itoa(setting.PasswordMinimumLength)+" with special characters,nubmer, upper and lower case letter", nil)
 	}
 
 	cmd.UserId = c.UserId

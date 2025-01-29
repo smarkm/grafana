@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/go-macaron/session"
 	"github.com/prometheus/common/model"
@@ -137,6 +138,8 @@ var (
 	VerifyEmailEnabled      bool
 	LoginHint               string
 	PasswordHint            string
+	PasswordMinimumLength   int
+	StrongPassword          bool
 	DefaultTheme            string
 	DisableLoginForm        bool
 	DisableSignoutMenu      bool
@@ -1122,6 +1125,8 @@ func readUserSettings(iniFile *ini.File, cfg *Cfg) error {
 
 	LoginHint = valueAsString(users, "login_hint", "")
 	PasswordHint = valueAsString(users, "password_hint", "")
+	PasswordMinimumLength = users.Key("password_minimum_length").MustInt(8)
+	StrongPassword = users.Key("strong_password").MustBool(false)
 	DefaultTheme = valueAsString(users, "default_theme", "")
 	ExternalUserMngLinkUrl = valueAsString(users, "external_manage_link_url", "")
 	ExternalUserMngLinkName = valueAsString(users, "external_manage_link_name", "")
@@ -1247,4 +1252,26 @@ func readServerSettings(iniFile *ini.File, cfg *Cfg) error {
 	}
 
 	return nil
+}
+
+func IsValidPassword(password string) bool {
+	if len(password) < PasswordMinimumLength {
+		return false // Length should be at least passwordMinimumLength
+	}
+
+	var hasUpper, hasLower, hasDigit, hasSpecial bool
+	for _, ch := range password {
+		switch {
+		case unicode.IsUpper(ch):
+			hasUpper = true
+		case unicode.IsLower(ch):
+			hasLower = true
+		case unicode.IsDigit(ch):
+			hasDigit = true
+		case unicode.IsPunct(ch) || unicode.IsSymbol(ch):
+			hasSpecial = true
+		}
+	}
+
+	return hasUpper && hasLower && hasDigit && hasSpecial
 }
