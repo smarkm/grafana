@@ -17,12 +17,13 @@ var userRelationshipMap = map[string]*models.UserRelationship{}
 func (hs *HTTPServer) SaveUserRelationshipHandler(c *models.ReqContext, data models.UserRelationship) Response {
 
 	if data.SuperId == "" {
-		return Error(http.StatusBadRequest, "superID and subID are required", nil)
+		return Error(http.StatusBadRequest, "superId and customerIds are required", nil)
 
 	}
 
 	cmd := &models.SaveUserRelationshipCommand{Data: data}
 	if err := bus.Dispatch(cmd); err != nil {
+		hs.log.Error("Failed to save user relationship", err.Error())
 		return Error(http.StatusInternalServerError, "Failed to save user relationship", nil)
 	}
 
@@ -44,9 +45,9 @@ func (hs *HTTPServer) UpdateUserRelationshipHandler(c *models.ReqContext, data m
 
 // Handler to delete user relationship
 func (hs *HTTPServer) DeleteUserRelationshipHandler(c *models.ReqContext) Response {
-	superID := c.Query("superID")
+	superID := c.Params("superId")
 	if superID == "" {
-		return Error(http.StatusBadRequest, "superID is required", nil)
+		return Error(http.StatusBadRequest, "superId is required", nil)
 	}
 
 	cmd := &models.DeleteUserRelationshipCommand{SuperId: superID}
@@ -70,7 +71,8 @@ func (hs *HTTPServer) QueryAllUserRelationshipsHandler(c *models.ReqContext) Res
 
 // Handler to query user relationships by superID
 func (hs *HTTPServer) QueryUserRelationshipBySuperIDHandler(c *models.ReqContext) Response {
-	superID := userRelationshipMap[c.GetCookie(setting.LoginCookieName)].SuperId
+	cookie := c.GetCookie(setting.LoginCookieName)
+	superID := userRelationshipMap[cookie].SuperId
 	if superID == "" {
 		return JSON(http.StatusOK, "")
 	}

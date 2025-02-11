@@ -2,7 +2,7 @@ package models
 
 // UserRelationship represents the relationship between a SuperId and associated CustomerIds
 type UserRelationship struct {
-	SuperId     string `json:"superId"`
+	SuperId     string `json:"superId" gorm:"primaryKey"`
 	CustomerIds string `json:"customerIds"`
 }
 

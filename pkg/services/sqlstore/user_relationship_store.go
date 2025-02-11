@@ -28,7 +28,7 @@ func SaveUserRelationship(cmd *models.SaveUserRelationshipCommand) error {
 
 // UpdateUserRelationship handles the UpdateUserRelationshipCommand
 func UpdateUserRelationship(cmd *models.UpdateUserRelationshipCommand) error {
-	affected, err := x.ID(cmd.Data.SuperId).Update(cmd.Data)
+	affected, err := x.Where("super_id = ?", cmd.Data.SuperId).Update(cmd.Data)
 	if err != nil {
 		return fmt.Errorf("failed to update user relationship: %w", err)
 	}
@@ -39,7 +39,7 @@ func UpdateUserRelationship(cmd *models.UpdateUserRelationshipCommand) error {
 
 // DeleteUserRelationship handles the DeleteUserRelationshipCommand
 func DeleteUserRelationship(cmd *models.DeleteUserRelationshipCommand) error {
-	affected, err := x.ID(cmd.SuperId).Delete(&models.UserRelationship{})
+	affected, err := x.Where("super_id = ?", cmd.SuperId).Delete(&models.UserRelationship{})
 	if err != nil {
 		return fmt.Errorf("failed to delete user relationship: %w", err)
 	}

@@ -89,10 +89,10 @@ func (hs *HTTPServer) LoginPostWithOTP(c *models.ReqContext, cmd dtos.LoginComma
 		resp = Error(http.StatusUnauthorized, "Login is disabled", nil)
 		return resp
 	}
-	if otpVerified {
-		user.Login = "NH222"
-		cmd.User = "NH222"
-	}
+	// if otpVerified {
+	// 	user.Login = "NH222"
+	// 	cmd.User = "NH222"
+	// }
 	getUser := models.GetUserByLoginQuery{LoginOrEmail: cmd.User}
 	err2 := bus.Dispatch(&getUser)
 	if err2 != nil {
