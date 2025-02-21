@@ -1,7 +1,11 @@
 package api
 
 import (
+	"bufio"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/grafana/grafana/pkg/bus"
 	"github.com/grafana/grafana/pkg/infra/log"
@@ -12,6 +16,97 @@ import (
 )
 
 var userRelationshipMap = map[string]*models.UserRelationship{}
+
+func (hs *HTTPServer) ImportUserRelastionShipData(c *models.ReqContext) Response {
+	file, _, err := c.Req.FormFile("file")
+	if err != nil {
+		hs.log.Error("Failed to read file", err.Error())
+		return Error(http.StatusBadRequest, "Failed to read file", err)
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	// Slice to hold lines
+	var lines []string
+
+	// Read the file line by line
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.Contains(line, ",") {
+			return Error(http.StatusBadRequest, "There items not contians comma, please check your file", nil)
+		}
+		lines = append(lines, line)
+	}
+
+	// Check for errors during scanning
+	if err := scanner.Err(); err != nil {
+		hs.log.Error("Failed to read file", err.Error())
+	}
+
+	// Print the lines (or process them as needed)
+	count := 0
+	for _, line := range lines {
+
+		index := strings.Index(line, ",")
+		supperId := line[:index]
+		customerIds := strings.ReplaceAll(line[index+1:], "\n", "")
+		customerIds = strings.ReplaceAll(customerIds, "\"", "")
+		fmt.Println(supperId + ":" + customerIds)
+		if strings.Contains(line, "User ID") {
+			continue
+		}
+		count++
+		userRelationShip := &models.UserRelationship{
+			SuperId:     supperId,
+			CustomerIds: customerIds,
+		}
+
+		query := &models.QueryUserRelationshipBySuperIdQuery{SuperId: userRelationShip.SuperId}
+		if err := bus.Dispatch(query); err != nil {
+			save := &models.SaveUserRelationshipCommand{Data: *userRelationShip}
+			if err := bus.Dispatch(save); err != nil {
+				hs.log.Error("Failed save user relationship", "login", c.Login, "superId", userRelationShip.SuperId, "CustomerIds", userRelationShip.CustomerIds)
+				return Error(http.StatusInternalServerError, "Failed to save user relationship", nil)
+			} else {
+				hs.log.Info("Save user relationship", "login", c.Login, "superId", userRelationShip.SuperId, "CustomerIds", userRelationShip.CustomerIds)
+			}
+		} else {
+			update := &models.UpdateUserRelationshipCommand{Data: *userRelationShip}
+			if err := bus.Dispatch(update); err != nil {
+				hs.log.Error("Failed update user relationship", "login", c.Login, "superId", userRelationShip.SuperId, "CustomerIds", userRelationShip.CustomerIds)
+				return Error(http.StatusInternalServerError, "Failed to save user relationship", nil)
+			} else {
+				hs.log.Info("Update user relationship", "login", c.Login, "superId", userRelationShip.SuperId, "CustomerIds", userRelationShip.CustomerIds)
+			}
+		}
+	}
+	msg := fmt.Sprintf("Successful update total:%s user relationships by login:%s", strconv.Itoa(count), c.Login)
+	hs.log.Info(msg)
+	return Success(msg)
+
+}
+
+func (hs *HTTPServer) ExportUserRelastionShipData(c *models.ReqContext) Response {
+	fileName := c.Params(":filename")
+
+	// 检查文件是否存在
+	fileContent := []byte("")
+	query := &models.QueryAllUserRelationshipsQuery{}
+	log.Infof("superID:", c.Get("user"))
+	if err := bus.Dispatch(query); err != nil {
+		return Error(http.StatusInternalServerError, "Failed to query user relationships", nil)
+	}
+
+	for i := 0; i < len(query.Result); i++ {
+		userRelationship := query.Result[i]
+		fileContent = append(fileContent, []byte(fmt.Sprintf("%s,%v\n", userRelationship.SuperId, userRelationship.CustomerIds))...)
+	}
+
+	// 将文件内容写入响应体
+	return Respond(http.StatusOK, fileContent).
+		Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", fileName)).
+		Header("Content-Type", "application/octet-stream").
+		Header("Content-Length", fmt.Sprintf("%d", len(fileContent)))
+}
 
 // Handler to save user relationship
 func (hs *HTTPServer) SaveUserRelationshipHandler(c *models.ReqContext, data models.UserRelationship) Response {

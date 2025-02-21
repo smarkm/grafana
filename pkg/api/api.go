@@ -117,6 +117,8 @@ func (hs *HTTPServer) registerRoutes() {
 	r.Delete("/api/user-relationship/delete/:superId", reqGrafanaAdmin, Wrap(hs.DeleteUserRelationshipHandler))
 	r.Get("/api/user-relationship/all", reqSignedIn, Wrap(hs.QueryAllUserRelationshipsHandler))
 	r.Get("/api/user-relationship/bySuperId", reqSignedIn, Wrap(hs.QueryUserRelationshipBySuperIDHandler))
+	r.Post("/api/user-relationship/import", reqGrafanaAdmin, Wrap(hs.ImportUserRelastionShipData))
+	//r.Get("/api/user-relationship/export", reqGrafanaAdmin, Wrap(hs.ExportUserRelastionShipData)) //deprecated
 	r.Get("/api/disclaimer", Wrap(hs.GetDisclaimer))
 
 	// dashboard snapshots
