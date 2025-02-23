@@ -156,7 +156,6 @@ func (hs *HTTPServer) DeleteUserRelationshipHandler(c *models.ReqContext) Respon
 // Handler to query all user relationships
 func (hs *HTTPServer) QueryAllUserRelationshipsHandler(c *models.ReqContext) Response {
 	query := &models.QueryAllUserRelationshipsQuery{}
-	log.Infof("superID:", c.Get("user"))
 	if err := bus.Dispatch(query); err != nil {
 		return Error(http.StatusInternalServerError, "Failed to query user relationships", nil)
 	}
@@ -167,14 +166,28 @@ func (hs *HTTPServer) QueryAllUserRelationshipsHandler(c *models.ReqContext) Res
 // Handler to query user relationships by superID
 func (hs *HTTPServer) QueryUserRelationshipBySuperIDHandler(c *models.ReqContext) Response {
 	cookie := c.GetCookie(setting.LoginCookieName)
-	superID := userRelationshipMap[cookie].SuperId
-	if superID == "" {
-		return JSON(http.StatusOK, "")
+	ck := userRelationshipMap[cookie]
+	if ck == nil {
+		return JSON(http.StatusUnauthorized, "Session expired")
 	}
+	superID := ck.SuperId
 
 	query := &models.QueryUserRelationshipBySuperIdQuery{SuperId: superID}
 	if err := bus.Dispatch(query); err != nil {
-		return Error(http.StatusInternalServerError, "Failed to query user relationship by superID", nil)
+		return JSON(http.StatusOK, models.UserRelationship{}) //no related record
+	} else if strings.ToLower(query.Result.CustomerIds) == "all" {
+		search := &models.SearchUsersQuery{}
+		if err := bus.Dispatch(search); err != nil {
+			hs.log.Error("Failed to search users", err.Error())
+			return Error(http.StatusInternalServerError, "Failed to search users", nil)
+		}
+		query.Result.CustomerIds = ""
+		for _, user := range search.Result.Users {
+			if user.Login == "admin" {
+				continue
+			}
+			query.Result.CustomerIds += user.Login + ","
+		}
 	}
 
 	return JSON(http.StatusOK, query.Result)
@@ -187,6 +200,7 @@ func (hs *HTTPServer) BindCustomerIDs(c *models.ReqContext, user *models.User, o
 	}
 	query := &models.QueryUserRelationshipBySuperIdQuery{SuperId: superID}
 	if err := bus.Dispatch(query); err != nil {
+		userRelationshipMap[cookieValue] = &models.UserRelationship{SuperId: superID, CustomerIds: ""}
 		return
 	}
 	customerIds := query.Result.CustomerIds
@@ -227,12 +241,14 @@ func (hs *HTTPServer) SwitchUser(c *models.ReqContext) Response {
 		"message": "Logged in",
 	}
 	if redirectTo := c.GetCookie("redirect_to"); len(redirectTo) > 0 {
-		if err := hs.ValidateRedirectTo(redirectTo); err == nil {
-			result["redirectUrl"] = redirectTo
-		} else {
-			log.Infof("Ignored invalid redirect_to cookie value: %v", redirectTo)
+		if err := hs.ValidateRedirectTo(redirectTo); err != nil {
+			// the user is already logged so instead of rendering the login page with error
+			// it should be redirected to the home page.
+			log.Debugf("Ignored invalid redirect_to cookie value: %v", redirectTo)
+			result["redirect_to"] = hs.Cfg.AppSubUrl + "/"
 		}
 		middleware.DeleteCookie(c.Resp, "redirect_to", hs.CookieOptionsFromCfg)
+
 	}
 	ck := c.GetCookie(setting.LoginCookieName)
 	superId := userRelationshipMap[ck].SuperId
