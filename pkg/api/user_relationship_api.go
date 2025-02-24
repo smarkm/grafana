@@ -49,6 +49,7 @@ func (hs *HTTPServer) ImportUserRelastionShipData(c *models.ReqContext) Response
 		index := strings.Index(line, ",")
 		supperId := line[:index]
 		customerIds := strings.ReplaceAll(line[index+1:], "\n", "")
+		customerIds = strings.ReplaceAll(customerIds, " ", "")
 		customerIds = strings.ReplaceAll(customerIds, "\"", "")
 		fmt.Println(supperId + ":" + customerIds)
 		if strings.Contains(line, "User ID") {
@@ -115,7 +116,7 @@ func (hs *HTTPServer) SaveUserRelationshipHandler(c *models.ReqContext, data mod
 		return Error(http.StatusBadRequest, "superId and customerIds are required", nil)
 
 	}
-
+	data.CustomerIds = strings.ReplaceAll(data.CustomerIds, " ", "")
 	cmd := &models.SaveUserRelationshipCommand{Data: data}
 	if err := bus.Dispatch(cmd); err != nil {
 		hs.log.Error("Failed to save user relationship", err.Error())
@@ -130,6 +131,7 @@ func (hs *HTTPServer) UpdateUserRelationshipHandler(c *models.ReqContext, data m
 	if data.SuperId == "" {
 		return Error(http.StatusBadRequest, "superID and subID are required", nil)
 	}
+	data.CustomerIds = strings.ReplaceAll(data.CustomerIds, " ", "")
 	cmd := &models.UpdateUserRelationshipCommand{Data: data}
 	if err := bus.Dispatch(cmd); err != nil {
 		return Error(http.StatusInternalServerError, "Failed to update user relationship", nil)
