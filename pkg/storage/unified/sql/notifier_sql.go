@@ -7,8 +7,10 @@ import (
 
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/grafana/grafana/pkg/infra/log"
+	"github.com/grafana/grafana-app-sdk/logging"
+
 	"github.com/grafana/grafana/pkg/storage/unified/resource"
+	"github.com/grafana/grafana/pkg/storage/unified/resourcepb"
 	"github.com/grafana/grafana/pkg/storage/unified/sql/sqltemplate"
 )
 
@@ -31,8 +33,9 @@ type pollingNotifier struct {
 	pollingInterval time.Duration
 	watchBufferSize int
 
-	log    log.Logger
-	tracer trace.Tracer
+	log            logging.Logger
+	tracer         trace.Tracer
+	storageMetrics *resource.StorageMetrics
 
 	bulkLock      *bulkLock
 	listLatestRVs func(ctx context.Context) (groupResourceRV, error)
@@ -46,8 +49,9 @@ type pollingNotifierConfig struct {
 	pollingInterval time.Duration
 	watchBufferSize int
 
-	log    log.Logger
-	tracer trace.Tracer
+	log            logging.Logger
+	tracer         trace.Tracer
+	storageMetrics *resource.StorageMetrics
 
 	bulkLock      *bulkLock
 	listLatestRVs func(ctx context.Context) (groupResourceRV, error)
@@ -101,6 +105,7 @@ func newPollingNotifier(cfg *pollingNotifierConfig) (*pollingNotifier, error) {
 		listLatestRVs:   cfg.listLatestRVs,
 		historyPoll:     cfg.historyPoll,
 		done:            cfg.done,
+		storageMetrics:  cfg.storageMetrics,
 	}, nil
 }
 
@@ -135,7 +140,7 @@ func (p *pollingNotifier) poller(ctx context.Context, since groupResourceRV, str
 				continue
 			}
 			for group, items := range grv {
-				for resource := range items {
+				for resource, latestRV := range items {
 					// If we haven't seen this resource before, we start from 0.
 					if _, ok := since[group]; !ok {
 						since[group] = make(map[string]int64)
@@ -144,7 +149,12 @@ func (p *pollingNotifier) poller(ctx context.Context, since groupResourceRV, str
 						since[group][resource] = 0
 					}
 
-					// Poll for new events.
+					// We don't need to poll if the RV hasn't changed.
+					if since[group][resource] >= latestRV {
+						continue
+					}
+
+					// Poll for new events since the last known RV.
 					next, err := p.poll(ctx, group, resource, since[group][resource], stream)
 					if err != nil {
 						p.log.Error("polling for resource", "err", err)
@@ -172,7 +182,9 @@ func (p *pollingNotifier) poll(ctx context.Context, grp string, res string, sinc
 	if err != nil {
 		return 0, fmt.Errorf("poll history: %w", err)
 	}
-	resource.NewStorageMetrics().PollerLatency.Observe(time.Since(start).Seconds())
+	if p.storageMetrics != nil {
+		p.storageMetrics.PollerLatency.Observe(time.Since(start).Seconds())
+	}
 
 	var nextRV int64
 	for _, rec := range records {
@@ -186,13 +198,13 @@ func (p *pollingNotifier) poll(ctx context.Context, grp string, res string, sinc
 		}
 		stream <- &resource.WrittenEvent{
 			Value: rec.Value,
-			Key: &resource.ResourceKey{
+			Key: &resourcepb.ResourceKey{
 				Namespace: rec.Key.Namespace,
 				Group:     rec.Key.Group,
 				Resource:  rec.Key.Resource,
 				Name:      rec.Key.Name,
 			},
-			Type:            resource.WatchEvent_Type(rec.Action),
+			Type:            resourcepb.WatchEvent_Type(rec.Action),
 			PreviousRV:      *prevRV,
 			Folder:          rec.Folder,
 			ResourceVersion: rec.ResourceVersion,

@@ -17,30 +17,27 @@ import (
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/bus"
 	"github.com/grafana/grafana/pkg/expr"
-	"github.com/grafana/grafana/pkg/services/ngalert/accesscontrol"
-	"github.com/grafana/grafana/pkg/services/ngalert/tests/fakes"
-	"github.com/grafana/grafana/pkg/services/search/sort"
-	"github.com/grafana/grafana/pkg/services/supportbundles/supportbundlestest"
-	"github.com/grafana/grafana/pkg/services/user"
-	"github.com/grafana/grafana/pkg/storage/legacysql/dualwrite"
-	"github.com/grafana/grafana/pkg/util"
-
 	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/infra/tracing"
-	acmock "github.com/grafana/grafana/pkg/services/accesscontrol/mock"
-	"github.com/grafana/grafana/pkg/services/dashboards"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/folder"
-	"github.com/grafana/grafana/pkg/services/folder/folderimpl"
 	"github.com/grafana/grafana/pkg/services/folder/foldertest"
+	"github.com/grafana/grafana/pkg/services/ngalert/accesscontrol"
 	"github.com/grafana/grafana/pkg/services/ngalert/models"
 	"github.com/grafana/grafana/pkg/services/ngalert/store"
-	"github.com/grafana/grafana/pkg/services/ngalert/testutil"
+	"github.com/grafana/grafana/pkg/services/ngalert/tests/fakes"
+	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/setting"
+	"github.com/grafana/grafana/pkg/util"
 )
 
-func TestAlertRuleService(t *testing.T) {
+// note: additional integration tests are in /pkg/tests/api/alerting/api_provisioning_test.go
+
+func TestIntegrationAlertRuleService(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	ruleService := createAlertRuleService(t, nil)
 	var orgID int64 = 1
 	u := &user.SignedInUser{
@@ -227,6 +224,97 @@ func TestAlertRuleService(t *testing.T) {
 
 		// check that the metadata is still there
 		require.Equal(t, ruleMetadata, readGroup.Rules[0].Metadata)
+	})
+
+	t.Run("updating a group with editor settings should override its prometheus rule definition", func(t *testing.T) {
+		namespaceUID := "my-namespace"
+		groupTitle := "test-group-123"
+
+		// create the rule group via the rule store, to persist the editor settings
+		rule := createTestRule(util.GenerateShortUID(), groupTitle, orgID, namespaceUID)
+		ruleMetadata := models.AlertRuleMetadata{
+			EditorSettings: models.EditorSettings{
+				SimplifiedQueryAndExpressionsSection: true,
+			},
+			PrometheusStyleRule: &models.PrometheusStyleRule{
+				OriginalRuleDefinition: "old",
+			},
+		}
+		rule.Metadata = ruleMetadata
+		r, err := ruleService.ruleStore.InsertAlertRules(context.Background(), models.NewUserUID(u), []models.AlertRule{rule})
+		require.NoError(t, err)
+		require.Len(t, r, 1)
+
+		// Set the UID for the rule to update it
+		rule.UID = r[0].UID
+		// clear the editor settings in the metadata to check that the existing setting is not overridden
+		rule.Metadata = models.AlertRuleMetadata{
+			PrometheusStyleRule: &models.PrometheusStyleRule{
+				OriginalRuleDefinition: "new",
+			},
+		}
+
+		// Now update the rule group with the rule to update its metadata
+		group := models.AlertRuleGroup{
+			Title:     groupTitle,
+			Interval:  60,
+			FolderUID: namespaceUID,
+			Rules:     []models.AlertRule{rule},
+		}
+
+		err = ruleService.ReplaceRuleGroup(context.Background(), u, group, models.ProvenanceAPI)
+		require.NoError(t, err)
+
+		readGroup, err := ruleService.GetRuleGroup(context.Background(), u, namespaceUID, groupTitle)
+		require.NoError(t, err)
+		require.NotEmpty(t, readGroup.Rules)
+		require.Len(t, readGroup.Rules, 1)
+
+		// check that the editor settings are still there
+		require.True(t, readGroup.Rules[0].Metadata.EditorSettings.SimplifiedQueryAndExpressionsSection)
+		// check the new prometheus rule definition
+		require.Equal(t, "new", readGroup.Rules[0].Metadata.PrometheusStyleRule.OriginalRuleDefinition)
+	})
+
+	t.Run("updating a group should override its prometheus rule definition", func(t *testing.T) {
+		namespaceUID := "my-namespace"
+		groupTitle := "test-group-123"
+
+		// create the rule group via the rule store, to persist the editor settings
+		rule := createTestRule(util.GenerateShortUID(), groupTitle, orgID, namespaceUID)
+		ruleMetadata := models.AlertRuleMetadata{
+			PrometheusStyleRule: &models.PrometheusStyleRule{
+				OriginalRuleDefinition: "old",
+			},
+		}
+		rule.Metadata = ruleMetadata
+		r, err := ruleService.ruleStore.InsertAlertRules(context.Background(), models.NewUserUID(u), []models.AlertRule{rule})
+		require.NoError(t, err)
+		require.Len(t, r, 1)
+
+		// Set the UID for the rule to update it
+		rule.UID = r[0].UID
+		// make the metadata empty
+		rule.Metadata = models.AlertRuleMetadata{}
+
+		// Now update the rule group with the rule to update its metadata
+		group := models.AlertRuleGroup{
+			Title:     groupTitle,
+			Interval:  60,
+			FolderUID: namespaceUID,
+			Rules:     []models.AlertRule{rule},
+		}
+
+		err = ruleService.ReplaceRuleGroup(context.Background(), u, group, models.ProvenanceAPI)
+		require.NoError(t, err)
+
+		readGroup, err := ruleService.GetRuleGroup(context.Background(), u, namespaceUID, groupTitle)
+		require.NoError(t, err)
+		require.NotEmpty(t, readGroup.Rules)
+		require.Len(t, readGroup.Rules, 1)
+
+		// check that the prometheus rule definition is empty
+		require.Nil(t, readGroup.Rules[0].Metadata.PrometheusStyleRule)
 	})
 
 	t.Run("updating a rule should not override its editor settings", func(t *testing.T) {
@@ -583,6 +671,42 @@ func TestAlertRuleService(t *testing.T) {
 				to:     models.ProvenanceNone,
 				errNil: false,
 			},
+			{
+				name:   "should be able to update from provenance none to 'converted prometheus'",
+				from:   models.ProvenanceNone,
+				to:     models.ProvenanceConvertedPrometheus,
+				errNil: true,
+			},
+			{
+				name:   "should be able to update from provenance 'converted prometheus' to none",
+				from:   models.ProvenanceConvertedPrometheus,
+				to:     models.ProvenanceNone,
+				errNil: true,
+			},
+			{
+				name:   "should not be able to update from provenance 'converted prometheus' to api",
+				from:   models.ProvenanceConvertedPrometheus,
+				to:     models.ProvenanceAPI,
+				errNil: false,
+			},
+			{
+				name:   "should not be able to update from provenance 'converted prometheus' to file",
+				from:   models.ProvenanceConvertedPrometheus,
+				to:     models.ProvenanceFile,
+				errNil: false,
+			},
+			{
+				name:   "should not be able to update from provenance api to 'converted prometheus'",
+				from:   models.ProvenanceAPI,
+				to:     models.ProvenanceConvertedPrometheus,
+				errNil: false,
+			},
+			{
+				name:   "should not be able to update from provenance file to 'converted prometheus'",
+				from:   models.ProvenanceFile,
+				to:     models.ProvenanceConvertedPrometheus,
+				errNil: false,
+			},
 		}
 		for _, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
@@ -626,7 +750,10 @@ func TestAlertRuleService(t *testing.T) {
 	})
 }
 
-func TestCreateAlertRule(t *testing.T) {
+func TestIntegrationCreateAlertRule(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	orgID := rand.Int63()
 	u := &user.SignedInUser{OrgID: orgID, UserUID: util.GenerateShortUID()}
 	groupKey := models.GenerateGroupKey(orgID)
@@ -1296,6 +1423,99 @@ func TestGetRuleGroup(t *testing.T) {
 	})
 }
 
+func TestListAlertRules(t *testing.T) {
+	orgID := rand.Int63()
+	u := &user.SignedInUser{OrgID: orgID}
+	groupKey1 := models.GenerateGroupKey(orgID)
+	groupKey2 := models.GenerateGroupKey(orgID)
+	gen := models.RuleGen
+	rules1 := gen.With(gen.WithGroupKey(groupKey1), gen.WithUniqueGroupIndex()).GenerateManyRef(3)
+	models.RulesGroup(rules1).SortByGroupIndex()
+	rules2 := gen.With(gen.WithGroupKey(groupKey2), gen.WithUniqueGroupIndex()).GenerateManyRef(4)
+	models.RulesGroup(rules2).SortByGroupIndex()
+	allRules := append(rules1, rules2...)
+
+	fs := foldertest.NewFakeService()
+	fs.AddFolder(&folder.Folder{
+		OrgID: orgID,
+		UID:   groupKey1.NamespaceUID,
+		Title: "folder1",
+	})
+	fs.AddFolder(&folder.Folder{
+		OrgID: orgID,
+		UID:   groupKey2.NamespaceUID,
+		Title: "folder2",
+	})
+
+	initServiceWithData := func(t *testing.T) (*AlertRuleService, *fakes.RuleStore, *fakes.FakeProvisioningStore, *fakeRuleAccessControlService) {
+		service, ruleStore, provenanceStore, ac := initService(t)
+		service.folderService = fs
+		ruleStore.Rules = map[int64][]*models.AlertRule{
+			orgID: allRules,
+		}
+		ac.HasAccessInFolderFunc = func(ctx context.Context, user identity.Requester, folder models.Namespaced) (bool, error) {
+			return true, nil
+		}
+
+		return service, ruleStore, provenanceStore, ac
+	}
+
+	t.Run("when user can read all rules", func(t *testing.T) {
+		t.Run("should skip AuthorizeRuleGroupRead and return all rules", func(t *testing.T) {
+			service, _, _, ac := initServiceWithData(t)
+			ac.CanReadAllRulesFunc = func(ctx context.Context, user identity.Requester) (bool, error) {
+				return true, nil
+			}
+
+			rules, _, token, err := service.ListAlertRules(context.Background(), u, ListAlertRulesOptions{})
+			require.NoError(t, err)
+			// check that rules contain all uids from allRules
+			ruleUIDs := make(map[string]bool)
+			for _, r := range rules {
+				ruleUIDs[r.UID] = true
+			}
+			for _, r := range allRules {
+				assert.True(t, ruleUIDs[r.UID])
+			}
+			require.Len(t, ruleUIDs, len(allRules))
+			require.Empty(t, token)
+
+			assert.Len(t, ac.Calls, 1)
+			assert.Equal(t, "CanReadAllRules", ac.Calls[0].Method)
+		})
+	})
+
+	t.Run("when user cannot read all rules", func(t *testing.T) {
+		t.Run("should return only rules in accessible folders", func(t *testing.T) {
+			service, _, _, ac := initServiceWithData(t)
+			ac.CanReadAllRulesFunc = func(ctx context.Context, user identity.Requester) (bool, error) {
+				return false, nil
+			}
+			ac.HasAccessInFolderFunc = func(ctx context.Context, user identity.Requester, folder models.Namespaced) (bool, error) {
+				return folder.GetNamespaceUID() == groupKey2.NamespaceUID, nil
+			}
+
+			rules, _, token, err := service.ListAlertRules(context.Background(), u, ListAlertRulesOptions{})
+			require.NoError(t, err)
+			// check that rules contain all uids from rules1
+			ruleUIDs := make(map[string]bool)
+			for _, r := range rules {
+				ruleUIDs[r.UID] = true
+			}
+			for _, r := range rules2 {
+				assert.True(t, ruleUIDs[r.UID])
+			}
+			require.Len(t, ruleUIDs, len(rules2))
+			require.Empty(t, token)
+
+			assert.Len(t, ac.Calls, 3)
+			assert.Equal(t, "CanReadAllRules", ac.Calls[0].Method)
+			assert.Equal(t, "HasAccessInFolder", ac.Calls[1].Method)
+			assert.Equal(t, "HasAccessInFolder", ac.Calls[2].Method)
+		})
+	})
+}
+
 func TestGetAlertRules(t *testing.T) {
 	orgID := rand.Int63()
 	u := &user.SignedInUser{OrgID: orgID}
@@ -1508,6 +1728,40 @@ func TestReplaceGroup(t *testing.T) {
 			require.Len(t, updates, 1)
 		})
 	})
+
+	t.Run("alert rule metadata should be updated correctly", func(t *testing.T) {
+		service, _, _, _ := initServiceWithData(t)
+
+		rule := dummyRule("test#3", orgID)
+		// the rule must have a UID to be updated, otherwise it will be created as new
+		// and the previous version will be deleted
+		rule.UID = util.GenerateShortUID()
+		rule.Metadata = models.AlertRuleMetadata{
+			EditorSettings: models.EditorSettings{
+				SimplifiedQueryAndExpressionsSection: true,
+			},
+			PrometheusStyleRule: &models.PrometheusStyleRule{
+				OriginalRuleDefinition: "old",
+			},
+		}
+		group := models.AlertRuleGroup{
+			Title:     rule.RuleGroup,
+			Interval:  rule.IntervalSeconds,
+			FolderUID: rule.NamespaceUID,
+			Rules:     []models.AlertRule{rule},
+		}
+
+		err := service.ReplaceRuleGroup(context.Background(), u, group, models.ProvenanceNone)
+		require.NoError(t, err)
+
+		rule.Metadata.PrometheusStyleRule.OriginalRuleDefinition = "new"
+		err = service.ReplaceRuleGroup(context.Background(), u, group, models.ProvenanceNone)
+		require.NoError(t, err)
+
+		rule, _, err = service.GetAlertRule(context.Background(), u, rule.UID)
+		require.NoError(t, err)
+		require.Equal(t, "new", rule.Metadata.PrometheusStyleRule.OriginalRuleDefinition)
+	})
 }
 
 func TestDeleteRuleGroup(t *testing.T) {
@@ -1601,7 +1855,7 @@ func TestDeleteRuleGroup(t *testing.T) {
 func TestDeleteRuleGroups(t *testing.T) {
 	orgID1 := rand.Int63()
 	orgID2 := rand.Int63()
-	u := &user.SignedInUser{OrgID: orgID1}
+	u := &user.SignedInUser{OrgID: orgID1, UserUID: "test-test"}
 
 	// Create groups across different orgs and namespaces
 	groupKey1 := models.AlertRuleGroupKey{
@@ -1680,6 +1934,7 @@ func TestDeleteRuleGroups(t *testing.T) {
 			// Verify only rules from group1 in org1 were deleted
 			deletes := getDeletedRules(t, ruleStore)
 			require.Len(t, deletes, 1)
+			require.Equal(t, "test-test", deletes[0].userID)
 			require.ElementsMatch(t, getUIDs(rules1), deletes[0].uids)
 		})
 
@@ -1761,8 +2016,8 @@ func TestDeleteRuleGroups(t *testing.T) {
 
 	t.Run("when filtering by imported Prometheus rules", func(t *testing.T) {
 		filterOpts := &FilterOptions{
-			ImportedPrometheusRule: util.Pointer(true),
-			NamespaceUIDs:          []string{"namespace1"},
+			HasPrometheusRuleDefinition: util.Pointer(true),
+			NamespaceUIDs:               []string{"namespace1"},
 		}
 
 		t.Run("when the group is not imported", func(t *testing.T) {
@@ -1820,90 +2075,6 @@ func TestDeleteRuleGroups(t *testing.T) {
 	})
 }
 
-func TestProvisiongWithFullpath(t *testing.T) {
-	tracer := tracing.InitializeTracerForTest()
-	inProcBus := bus.ProvideBus(tracer)
-	sqlStore, cfg := db.InitTestDBWithCfg(t)
-	folderStore := folderimpl.ProvideDashboardFolderStore(sqlStore)
-	_, dashboardStore := testutil.SetupDashboardService(t, sqlStore, folderStore, cfg)
-	ac := acmock.New()
-	features := featuremgmt.WithFeatures(featuremgmt.FlagNestedFolders)
-	fStore := folderimpl.ProvideStore(sqlStore)
-	folderService := folderimpl.ProvideService(
-		fStore, ac, inProcBus, dashboardStore, folderStore,
-		nil, sqlStore, features, supportbundlestest.NewFakeBundleService(), nil, cfg, nil, tracing.InitializeTracerForTest(), nil, dualwrite.ProvideTestService(), sort.ProvideService())
-
-	ruleService := createAlertRuleService(t, folderService)
-	var orgID int64 = 1
-
-	signedInUser := user.SignedInUser{UserID: 1, OrgID: orgID, Permissions: map[int64]map[string][]string{
-		orgID: {
-			dashboards.ActionFoldersCreate: {dashboards.ScopeFoldersAll},
-			dashboards.ActionFoldersRead:   {dashboards.ScopeFoldersAll},
-			dashboards.ActionFoldersWrite:  {dashboards.ScopeFoldersAll}},
-	}}
-	namespaceUID := "my-namespace"
-	namespaceTitle := namespaceUID
-	rootFolder, err := folderService.Create(context.Background(), &folder.CreateFolderCommand{
-		UID:          namespaceUID,
-		Title:        namespaceTitle,
-		OrgID:        orgID,
-		SignedInUser: &signedInUser,
-	})
-	require.NoError(t, err)
-
-	t.Run("for a rule under a root folder should set the right fullpath", func(t *testing.T) {
-		r, err := ruleService.ruleStore.InsertAlertRules(context.Background(), models.NewUserUID(&signedInUser), []models.AlertRule{
-			createTestRule("my-cool-group", "my-cool-group", orgID, namespaceUID),
-		})
-		require.NoError(t, err)
-		require.Len(t, r, 1)
-
-		res, err := ruleService.GetAlertRuleWithFolderFullpath(context.Background(), &signedInUser, r[0].UID)
-		require.NoError(t, err)
-		assert.Equal(t, namespaceTitle, res.FolderFullpath)
-
-		res2, err := ruleService.GetAlertRuleGroupWithFolderFullpath(context.Background(), &signedInUser, namespaceUID, "my-cool-group")
-		require.NoError(t, err)
-		assert.Equal(t, namespaceTitle, res2.FolderFullpath)
-
-		res3, err := ruleService.GetAlertGroupsWithFolderFullpath(context.Background(), &signedInUser, &FilterOptions{NamespaceUIDs: []string{namespaceUID}})
-		require.NoError(t, err)
-		assert.Equal(t, namespaceTitle, res3[0].FolderFullpath)
-	})
-
-	t.Run("for a rule under a subfolder should set the right fullpath", func(t *testing.T) {
-		otherNamespaceUID := "my-other-namespace"
-		otherNamespaceTitle := "my-other-namespace containing multiple //"
-		_, err := folderService.Create(context.Background(), &folder.CreateFolderCommand{
-			UID:          otherNamespaceUID,
-			Title:        otherNamespaceTitle,
-			OrgID:        orgID,
-			ParentUID:    rootFolder.UID,
-			SignedInUser: &signedInUser,
-		})
-		require.NoError(t, err)
-
-		r, err := ruleService.ruleStore.InsertAlertRules(context.Background(), models.NewUserUID(&signedInUser), []models.AlertRule{
-			createTestRule("my-cool-group-2", "my-cool-group-2", orgID, otherNamespaceUID),
-		})
-		require.NoError(t, err)
-		require.Len(t, r, 1)
-
-		res, err := ruleService.GetAlertRuleWithFolderFullpath(context.Background(), &signedInUser, r[0].UID)
-		require.NoError(t, err)
-		assert.Equal(t, "my-namespace/my-other-namespace containing multiple \\/\\/", res.FolderFullpath)
-
-		res2, err := ruleService.GetAlertRuleGroupWithFolderFullpath(context.Background(), &signedInUser, otherNamespaceUID, "my-cool-group-2")
-		require.NoError(t, err)
-		assert.Equal(t, "my-namespace/my-other-namespace containing multiple \\/\\/", res2.FolderFullpath)
-
-		res3, err := ruleService.GetAlertGroupsWithFolderFullpath(context.Background(), &signedInUser, &FilterOptions{NamespaceUIDs: []string{otherNamespaceUID}})
-		require.NoError(t, err)
-		assert.Equal(t, "my-namespace/my-other-namespace containing multiple \\/\\/", res3[0].FolderFullpath)
-	})
-}
-
 func getDeleteQueries(ruleStore *fakes.RuleStore) []fakes.GenericRecordedQuery {
 	generic := ruleStore.GetRecordedCommands(func(cmd any) (any, bool) {
 		a, ok := cmd.(fakes.GenericRecordedQuery)
@@ -1920,8 +2091,9 @@ func getDeleteQueries(ruleStore *fakes.RuleStore) []fakes.GenericRecordedQuery {
 }
 
 type deleteRuleOperation struct {
-	orgID int64
-	uids  []string
+	orgID  int64
+	userID string
+	uids   []string
 }
 
 func getDeletedRules(t *testing.T, ruleStore *fakes.RuleStore) []deleteRuleOperation {
@@ -1933,12 +2105,20 @@ func getDeletedRules(t *testing.T, ruleStore *fakes.RuleStore) []deleteRuleOpera
 		orgID, ok := q.Params[0].(int64)
 		require.True(t, ok, "orgID parameter should be int64")
 
-		uids, ok := q.Params[1].([]string)
+		uid := ""
+		userUID, ok := q.Params[1].(*models.UserUID)
+		require.True(t, ok, "parameter should be UserUID")
+		if userUID != nil {
+			uid = string(*userUID)
+		}
+
+		uids, ok := q.Params[3].([]string)
 		require.True(t, ok, "uids parameter should be []string")
 
 		operations = append(operations, deleteRuleOperation{
-			orgID: orgID,
-			uids:  uids,
+			orgID:  orgID,
+			userID: uid,
+			uids:   uids,
 		})
 	}
 	return operations
@@ -1952,9 +2132,10 @@ func createAlertRuleService(t *testing.T, folderService folder.Service) AlertRul
 		Cfg: setting.UnifiedAlertingSettings{
 			BaseInterval: time.Second * 10,
 		},
-		Logger:        log.NewNopLogger(),
-		FolderService: folderService,
-		Bus:           bus.ProvideBus(tracing.InitializeTracerForTest()),
+		Logger:         log.NewNopLogger(),
+		FolderService:  folderService,
+		Bus:            bus.ProvideBus(tracing.InitializeTracerForTest()),
+		FeatureToggles: featuremgmt.WithFeatures(),
 	}
 	// store := fakes.NewRuleStore(t)
 	quotas := MockQuotaChecker{}

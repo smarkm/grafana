@@ -35,20 +35,24 @@ func setupTestEnv(t testing.TB) *Service {
 	cfg := setting.NewCfg()
 
 	ac := &Service{
-		cache:         localcache.ProvideService(),
-		cfg:           cfg,
-		features:      featuremgmt.WithFeatures(),
-		log:           log.New("accesscontrol"),
-		registrations: accesscontrol.RegistrationList{},
-		roles:         accesscontrol.BuildBasicRoleDefinitions(),
-		store:         database.ProvideService(db.InitTestDB(t)),
-		permRegistry:  permreg.ProvidePermissionRegistry(),
+		cache:          localcache.ProvideService(),
+		cfg:            cfg,
+		features:       featuremgmt.WithFeatures(),
+		log:            log.New("accesscontrol"),
+		registrations:  accesscontrol.RegistrationList{},
+		roles:          accesscontrol.BuildBasicRoleDefinitions(),
+		store:          database.ProvideService(db.InitTestDB(t)),
+		permRegistry:   permreg.ProvidePermissionRegistry(),
+		actionResolver: resourcepermissions.NewActionSetService(),
 	}
 	require.NoError(t, ac.RegisterFixedRoles(context.Background()))
 	return ac
 }
 
-func TestUsageMetrics(t *testing.T) {
+func TestIntegrationUsageMetrics(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	tests := []struct {
 		name          string
 		expectedValue int
@@ -79,7 +83,10 @@ func TestUsageMetrics(t *testing.T) {
 	}
 }
 
-func TestService_DeclareFixedRoles(t *testing.T) {
+func TestIntegrationService_DeclareFixedRoles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	tests := []struct {
 		name          string
 		registrations []accesscontrol.RoleRegistration
@@ -164,7 +171,10 @@ func TestService_DeclareFixedRoles(t *testing.T) {
 	}
 }
 
-func TestService_DeclarePluginRoles(t *testing.T) {
+func TestIntegrationService_DeclarePluginRoles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	tests := []struct {
 		name          string
 		pluginID      string
@@ -277,7 +287,10 @@ func TestService_DeclarePluginRoles(t *testing.T) {
 	}
 }
 
-func TestService_RegisterFixedRoles(t *testing.T) {
+func TestIntegrationService_RegisterFixedRoles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	tests := []struct {
 		name          string
 		token         licensing.Licensing
@@ -379,7 +392,10 @@ func TestService_RegisterFixedRoles(t *testing.T) {
 	}
 }
 
-func TestService_SearchUsersPermissions(t *testing.T) {
+func TestIntegrationService_SearchUsersPermissions(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	searchOption := accesscontrol.SearchOptions{ActionPrefix: "teams"}
 	ctx := context.Background()
 	listAllPerms := map[string][]string{accesscontrol.ActionUsersPermissionsRead: {"users:*"}}
@@ -600,7 +616,10 @@ func TestService_SearchUsersPermissions(t *testing.T) {
 	}
 }
 
-func TestService_SearchUserPermissions(t *testing.T) {
+func TestIntegrationService_SearchUserPermissions(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	ctx := context.Background()
 	tests := []struct {
 		name           string
@@ -805,8 +824,7 @@ func TestService_SearchUserPermissions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ac := setupTestEnv(t)
 			if tt.withActionSets {
-				ac.features = featuremgmt.WithFeatures(featuremgmt.FlagAccessActionSets)
-				actionSetSvc := resourcepermissions.NewActionSetService(ac.features)
+				actionSetSvc := resourcepermissions.NewActionSetService()
 				for set, actions := range tt.actionSets {
 					actionSetName := resourcepermissions.GetActionSetName(strings.Split(set, ":")[0], strings.Split(set, ":")[1])
 					actionSetSvc.StoreActionSet(actionSetName, actions)
@@ -832,7 +850,10 @@ func TestService_SearchUserPermissions(t *testing.T) {
 	}
 }
 
-func TestService_SaveExternalServiceRole(t *testing.T) {
+func TestIntegrationService_SaveExternalServiceRole(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	type run struct {
 		cmd     accesscontrol.SaveExternalServiceRoleCommand
 		wantErr bool
@@ -912,13 +933,17 @@ func TestService_SaveExternalServiceRole(t *testing.T) {
 				// Check that the permissions and assignment are stored correctly
 				perms, errGetPerms := ac.getUserPermissions(ctx, &user.SignedInUser{OrgID: r.cmd.AssignmentOrgID, UserID: 2}, accesscontrol.Options{})
 				require.NoError(t, errGetPerms)
-				assert.ElementsMatch(t, r.cmd.Permissions, perms)
+				// shared with me is added by default for all users in pkg/services/accesscontrol/acimpl/service.go
+				assert.Equal(t, append([]accesscontrol.Permission{{Action: "folders:read", Scope: "folders:uid:sharedwithme"}}, r.cmd.Permissions...), perms)
 			}
 		})
 	}
 }
 
-func TestService_DeleteExternalServiceRole(t *testing.T) {
+func TestIntegrationService_DeleteExternalServiceRole(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	tests := []struct {
 		name              string
 		initCmd           *accesscontrol.SaveExternalServiceRoleCommand
@@ -965,8 +990,47 @@ func TestService_DeleteExternalServiceRole(t *testing.T) {
 				// Check that the permissions and assignment are removed correctly
 				perms, errGetPerms := ac.getUserPermissions(ctx, &user.SignedInUser{OrgID: tt.initCmd.AssignmentOrgID, UserID: 2}, accesscontrol.Options{})
 				require.NoError(t, errGetPerms)
-				assert.Empty(t, perms)
+				// shared with me is added by default for all users in pkg/services/accesscontrol/acimpl/service.go
+				assert.Equal(t, []accesscontrol.Permission{{Action: "folders:read", Scope: "folders:uid:sharedwithme"}}, perms)
 			}
 		})
 	}
+}
+
+func TestIntegrationService_GetRoleByName(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	t.Parallel()
+
+	ctx := context.Background()
+
+	t.Run("when the role does not exists, it returns an error", func(t *testing.T) {
+		t.Parallel()
+
+		ac := setupTestEnv(t)
+		ac.registrations = accesscontrol.RegistrationList{}
+
+		role, err := ac.GetRoleByName(ctx, 0, "not-found-role")
+		require.ErrorIs(t, err, accesscontrol.ErrRoleNotFound)
+		require.Nil(t, role)
+	})
+
+	t.Run("when the role exists, it is returned", func(t *testing.T) {
+		t.Parallel()
+
+		roleName := "fixed:test:test"
+
+		ac := setupTestEnv(t)
+		ac.registrations = accesscontrol.RegistrationList{}
+		ac.registrations.Append(accesscontrol.RoleRegistration{
+			Role:   accesscontrol.RoleDTO{Name: roleName},
+			Grants: []string{"Admin"},
+		})
+
+		role, err := ac.GetRoleByName(ctx, 0, roleName)
+		require.NoError(t, err)
+		require.NotNil(t, role)
+		require.Equal(t, roleName, role.Name)
+	})
 }

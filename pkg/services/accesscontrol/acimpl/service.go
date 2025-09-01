@@ -147,10 +147,7 @@ func (s *Service) getUserPermissions(ctx context.Context, user identity.Requeste
 			permissions = append(permissions, basicRole.Permissions...)
 		}
 	}
-
-	if s.features.IsEnabled(ctx, featuremgmt.FlagNestedFolders) {
-		permissions = append(permissions, SharedWithMeFolderPermission)
-	}
+	permissions = append(permissions, SharedWithMeFolderPermission)
 
 	// we don't care about the error here, if this fails we get 0 and no
 	// permission assigned to user will be returned, only for org role.
@@ -166,10 +163,8 @@ func (s *Service) getUserPermissions(ctx context.Context, user identity.Requeste
 	if err != nil {
 		return nil, err
 	}
-	if s.features.IsEnabled(ctx, featuremgmt.FlagAccessActionSets) {
-		dbPermissions = s.actionResolver.ExpandActionSets(dbPermissions)
-	}
 
+	dbPermissions = s.actionResolver.ExpandActionSets(dbPermissions)
 	return append(permissions, dbPermissions...), nil
 }
 
@@ -188,10 +183,8 @@ func (s *Service) getBasicRolePermissions(ctx context.Context, role string, orgI
 		OrgID:        orgID,
 		RolePrefixes: OSSRolesPrefixes,
 	})
-	if s.features.IsEnabled(ctx, featuremgmt.FlagAccessActionSets) {
-		dbPermissions = s.actionResolver.ExpandActionSets(dbPermissions)
-	}
 
+	dbPermissions = s.actionResolver.ExpandActionSets(dbPermissions)
 	return append(permissions, dbPermissions...), err
 }
 
@@ -205,10 +198,8 @@ func (s *Service) getTeamsPermissions(ctx context.Context, teamIDs []int64, orgI
 		RolePrefixes: OSSRolesPrefixes,
 	})
 
-	if s.features.IsEnabled(ctx, featuremgmt.FlagAccessActionSets) {
-		for teamID, permissions := range teamPermissions {
-			teamPermissions[teamID] = s.actionResolver.ExpandActionSets(permissions)
-		}
+	for teamID, permissions := range teamPermissions {
+		teamPermissions[teamID] = s.actionResolver.ExpandActionSets(permissions)
 	}
 
 	return teamPermissions, err
@@ -237,12 +228,8 @@ func (s *Service) getUserDirectPermissions(ctx context.Context, user identity.Re
 		return nil, err
 	}
 
-	if s.features.IsEnabled(ctx, featuremgmt.FlagAccessActionSets) {
-		permissions = s.actionResolver.ExpandActionSets(permissions)
-	}
-	if s.features.IsEnabled(ctx, featuremgmt.FlagNestedFolders) {
-		permissions = append(permissions, SharedWithMeFolderPermission)
-	}
+	permissions = s.actionResolver.ExpandActionSets(permissions)
+	permissions = append(permissions, SharedWithMeFolderPermission)
 
 	return permissions, nil
 }
@@ -250,11 +237,6 @@ func (s *Service) getUserDirectPermissions(ctx context.Context, user identity.Re
 func (s *Service) getCachedUserPermissions(ctx context.Context, user identity.Requester, options accesscontrol.Options) ([]accesscontrol.Permission, error) {
 	ctx, span := tracer.Start(ctx, "accesscontrol.acimpl.getCachedUserPermissions")
 	defer span.End()
-
-	cacheKey := accesscontrol.GetUserPermissionCacheKey(user)
-	if cachedPermissions, ok := s.cache.Get(cacheKey); ok {
-		return cachedPermissions.([]accesscontrol.Permission), nil
-	}
 
 	permissions, err := s.getCachedBasicRolesPermissions(ctx, user, options)
 	if err != nil {
@@ -271,9 +253,7 @@ func (s *Service) getCachedUserPermissions(ctx context.Context, user identity.Re
 	if err != nil {
 		return nil, err
 	}
-
 	permissions = append(permissions, userManagedPermissions...)
-	s.cache.Set(cacheKey, permissions, cacheTTL)
 	span.SetAttributes(attribute.Int("num_permissions", len(permissions)))
 
 	return permissions, nil
@@ -398,7 +378,6 @@ func (s *Service) getCachedTeamsPermissions(ctx context.Context, user identity.R
 }
 
 func (s *Service) ClearUserPermissionCache(user identity.Requester) {
-	s.cache.Delete(accesscontrol.GetUserPermissionCacheKey(user))
 	s.cache.Delete(accesscontrol.GetUserDirectPermissionCacheKey(user))
 }
 
@@ -451,6 +430,11 @@ func (s *Service) RegisterFixedRoles(ctx context.Context) error {
 		for br := range accesscontrol.BuiltInRolesWithParents(registration.Grants) {
 			if basicRole, ok := s.roles[br]; ok {
 				for _, p := range registration.Role.Permissions {
+					if registration.Role.IsPlugin() && p.Action == pluginaccesscontrol.ActionAppAccess {
+						s.log.Debug("Plugin is attempting to grant access permission, but this permission is already granted by default and will be ignored",
+							"role", registration.Role.Name, "permission", p.Action, "scope", p.Scope)
+						continue
+					}
 					perm := accesscontrol.Permission{
 						Action: p.Action,
 						Scope:  p.Scope,
@@ -545,11 +529,9 @@ func (s *Service) SearchUsersPermissions(ctx context.Context, usr identity.Reque
 		return nil, err
 	}
 
-	if s.features.IsEnabled(ctx, featuremgmt.FlagAccessActionSets) {
-		options.ActionSets = s.actionResolver.ResolveAction(options.Action)
-		options.ActionSets = append(options.ActionSets,
-			s.actionResolver.ResolveActionPrefix(options.ActionPrefix)...)
-	}
+	options.ActionSets = s.actionResolver.ResolveAction(options.Action)
+	options.ActionSets = append(options.ActionSets,
+		s.actionResolver.ResolveActionPrefix(options.ActionPrefix)...)
 
 	// Get managed permissions (DB)
 	usersPermissions, err := s.store.SearchUsersPermissions(ctx, usr.GetOrgID(), options)
@@ -610,7 +592,7 @@ func (s *Service) SearchUsersPermissions(ctx context.Context, usr identity.Reque
 		}
 	}
 
-	if s.features.IsEnabled(ctx, featuremgmt.FlagAccessActionSets) && len(options.ActionSets) > 0 {
+	if len(options.ActionSets) > 0 {
 		for id, perms := range res {
 			res[id] = s.actionResolver.ExpandActionSetsWithFilter(perms, GetActionFilter(options))
 		}
@@ -661,11 +643,9 @@ func (s *Service) searchUserPermissions(ctx context.Context, orgID int64, search
 		}
 	}
 
-	if s.features.IsEnabled(ctx, featuremgmt.FlagAccessActionSets) {
-		searchOptions.ActionSets = s.actionResolver.ResolveAction(searchOptions.Action)
-		searchOptions.ActionSets = append(searchOptions.ActionSets,
-			s.actionResolver.ResolveActionPrefix(searchOptions.ActionPrefix)...)
-	}
+	searchOptions.ActionSets = s.actionResolver.ResolveAction(searchOptions.Action)
+	searchOptions.ActionSets = append(searchOptions.ActionSets,
+		s.actionResolver.ResolveActionPrefix(searchOptions.ActionPrefix)...)
 
 	// Get permissions from the DB
 	dbPermissions, err := s.store.SearchUsersPermissions(ctx, orgID, searchOptions)
@@ -674,7 +654,7 @@ func (s *Service) searchUserPermissions(ctx context.Context, orgID int64, search
 	}
 	permissions = append(permissions, dbPermissions[searchOptions.UserID]...)
 
-	if s.features.IsEnabled(ctx, featuremgmt.FlagAccessActionSets) && len(searchOptions.ActionSets) != 0 {
+	if len(searchOptions.ActionSets) != 0 {
 		permissions = s.actionResolver.ExpandActionSetsWithFilter(permissions, GetActionFilter(searchOptions))
 	}
 

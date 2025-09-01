@@ -10,7 +10,7 @@
 
 import * as ui from '@grafana/schema';
 
-export const pluginVersion = "11.6.0-pre";
+export const pluginVersion = "12.2.0-pre";
 
 export interface Options {
   /**
@@ -25,6 +25,16 @@ export interface Options {
    * Represents the index of the selected frame
    */
   frameIndex: number;
+  /**
+   * Defines the number of columns to freeze on the left side of the table
+   */
+  frozenColumns?: {
+    left?: number;
+  };
+  /**
+   * limits the maximum height of a row, if text wrapping or dynamic height is enabled
+   */
+  maxRowHeight?: number;
   /**
    * Controls whether the panel should show the header
    */
