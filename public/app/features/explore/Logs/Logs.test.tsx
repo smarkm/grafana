@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ComponentProps } from 'react';
 import { Provider } from 'react-redux';
@@ -65,6 +65,8 @@ describe('Logs', () => {
   let originalHref = window.location.href;
 
   beforeEach(() => {
+    window.HTMLElement.prototype.scrollIntoView = jest.fn();
+    window.HTMLElement.prototype.scroll = jest.fn();
     localStorage.clear();
     jest.clearAllMocks();
   });
@@ -73,6 +75,7 @@ describe('Logs', () => {
     Object.defineProperty(window, 'location', {
       value: {
         href: 'http://localhost:3000/explore?test',
+        search: '?test',
       },
       writable: true,
     });
@@ -128,9 +131,7 @@ describe('Logs', () => {
           to: toUtc('2019-01-01 16:00:00'),
           raw: { from: 'now-1h', to: 'now' },
         }}
-        addResultsToCache={() => {}}
         onChangeTime={() => {}}
-        clearCache={() => {}}
         getFieldLinks={() => {
           return [];
         }}
@@ -159,39 +160,6 @@ describe('Logs', () => {
     );
     return { ...rendered, store: fakeStore };
   };
-
-  describe('scrolling behavior', () => {
-    let originalInnerHeight: number;
-    beforeEach(() => {
-      originalInnerHeight = window.innerHeight;
-      window.innerHeight = 1000;
-      window.HTMLElement.prototype.scrollIntoView = jest.fn();
-      window.HTMLElement.prototype.scroll = jest.fn();
-    });
-    afterEach(() => {
-      window.innerHeight = originalInnerHeight;
-    });
-
-    it('should call `scrollElement.scroll`', () => {
-      const logs = [];
-      for (let i = 0; i < 50; i++) {
-        logs.push(makeLog({ uid: `uid${i}`, rowId: `id${i}`, timeEpochMs: i }));
-      }
-      const scrollElementMock = {
-        scroll: jest.fn(),
-        scrollTop: 920,
-      };
-      setup(
-        { scrollElement: scrollElementMock as unknown as HTMLDivElement, panelState: { logs: { id: 'uid47' } } },
-        undefined,
-        logs
-      );
-
-      // element.getBoundingClientRect().top will always be 0 for jsdom
-      // calc will be `scrollElement.scrollTop - window.innerHeight / 2` -> 920 - 500 = 420
-      expect(scrollElementMock.scroll).toBeCalledWith({ behavior: 'smooth', top: 420 });
-    });
-  });
 
   it('should render logs', () => {
     setup();
@@ -223,6 +191,7 @@ describe('Logs', () => {
     render(
       <Provider store={store}>
         <Logs
+          logsFrames={undefined}
           exploreId={'left'}
           splitOpen={() => undefined}
           logsVolumeEnabled={true}
@@ -246,9 +215,7 @@ describe('Logs', () => {
             to: toUtc('2019-01-01 16:00:00'),
             raw: { from: 'now-1h', to: 'now' },
           }}
-          addResultsToCache={() => {}}
           onChangeTime={() => {}}
-          clearCache={() => {}}
           getFieldLinks={() => {
             return [];
           }}
@@ -273,6 +240,7 @@ describe('Logs', () => {
     render(
       <Provider store={store}>
         <Logs
+          logsFrames={undefined}
           exploreId={'left'}
           splitOpen={() => undefined}
           logsVolumeEnabled={true}
@@ -296,9 +264,7 @@ describe('Logs', () => {
             to: toUtc('2019-01-01 16:00:00'),
             raw: { from: 'now-1h', to: 'now' },
           }}
-          addResultsToCache={() => {}}
           onChangeTime={() => {}}
-          clearCache={() => {}}
           getFieldLinks={() => {
             return [];
           }}
@@ -325,6 +291,7 @@ describe('Logs', () => {
     render(
       <Provider store={store}>
         <Logs
+          logsFrames={undefined}
           exploreId={'left'}
           splitOpen={() => undefined}
           logsVolumeEnabled={true}
@@ -349,9 +316,7 @@ describe('Logs', () => {
             to: toUtc('2019-01-01 16:00:00'),
             raw: { from: 'now-1h', to: 'now' },
           }}
-          addResultsToCache={() => {}}
           onChangeTime={() => {}}
-          clearCache={() => {}}
           getFieldLinks={() => {
             return [];
           }}
@@ -412,22 +377,6 @@ describe('Logs', () => {
       expect(fakeChangePanelState).toHaveBeenCalledWith('right', 'logs', { logs: {} });
     });
 
-    it('should scroll the scrollElement into view if rows contain id', () => {
-      const panelState = { logs: { id: '3' } };
-      const scrollElementMock = { scroll: jest.fn() };
-      setup({ loading: false, scrollElement: scrollElementMock as unknown as HTMLDivElement, panelState });
-
-      expect(scrollElementMock.scroll).toHaveBeenCalled();
-    });
-
-    it('should not scroll the scrollElement into view if rows does not contain id', () => {
-      const panelState = { logs: { id: 'not-included' } };
-      const scrollElementMock = { scroll: jest.fn() };
-      setup({ loading: false, scrollElement: scrollElementMock as unknown as HTMLDivElement, panelState });
-
-      expect(scrollElementMock.scroll).not.toHaveBeenCalled();
-    });
-
     it('should call reportInteraction on permalinkClick', async () => {
       const panelState = { logs: { id: 'not-included' } };
       const rows = [
@@ -479,8 +428,6 @@ describe('Logs', () => {
     });
 
     it('should call createAndCopyShortLink on permalinkClick - with infinite scrolling', async () => {
-      const featureToggleValue = config.featureToggles.logsInfiniteScrolling;
-      config.featureToggles.logsInfiniteScrolling = true;
       const rows = [
         makeLog({ uid: '1', rowId: 'id1', timeEpochMs: 1 }),
         makeLog({ uid: '2', rowId: 'id2', timeEpochMs: 1 }),
@@ -503,7 +450,6 @@ describe('Logs', () => {
         )
       );
       expect(createAndCopyShortLink).toHaveBeenCalledWith(expect.stringMatching('visualisationType%22:%22logs'));
-      config.featureToggles.logsInfiniteScrolling = featureToggleValue;
     });
   });
 
@@ -568,6 +514,72 @@ describe('Logs', () => {
 
       const table = screen.getByTestId('logRowsTable');
       expect(table).toBeInTheDocument();
+    });
+  });
+  describe('with table panel visualisation', () => {
+    let originalVisualisationTypeValue = config.featureToggles.logsTablePanelNG;
+    let origResizeObserver = global.ResizeObserver;
+
+    beforeEach(() => {
+      origResizeObserver = global.ResizeObserver;
+      // Mock ResizeObserver
+      global.ResizeObserver = class ResizeObserver {
+        constructor(callback: unknown) {
+          // Store the callback
+          this.callback = callback;
+        }
+        callback: unknown;
+        observe() {
+          // Do nothing
+        }
+        unobserve() {
+          // Do nothing
+        }
+        disconnect() {
+          // Do nothing
+        }
+      };
+    });
+
+    afterEach(() => {
+      global.ResizeObserver = origResizeObserver;
+    });
+
+    beforeAll(() => {
+      originalVisualisationTypeValue = config.featureToggles.logsTablePanelNG;
+      config.featureToggles.logsTablePanelNG = true;
+    });
+
+    afterAll(() => {
+      config.featureToggles.logsTablePanelNG = originalVisualisationTypeValue;
+    });
+
+    it('should show table', async () => {
+      setup({
+        panelState: {
+          logs: {
+            visualisationType: 'table',
+          },
+        },
+      });
+      await waitFor(() => expect(screen.getByRole('button', { name: /download/i })).toBeInTheDocument());
+      const logs = screen.queryByTestId('logRows');
+      expect(logs).not.toBeInTheDocument();
+    });
+
+    it('should show logs', async () => {
+      setup({
+        panelState: {
+          logs: {
+            visualisationType: 'logs',
+          },
+        },
+      });
+
+      await waitFor(() => expect(screen.getByText('Download')).toBeInTheDocument());
+      const logs = await screen.findByTestId('logRows');
+      expect(logs).toBeInTheDocument();
+      expect(screen.getByText('log message 3')).toBeVisible();
     });
   });
 });

@@ -23,7 +23,7 @@ export class DataFrameView<T extends object = any> extends FunctionalVector<T> {
   constructor(private data: DataFrame) {
     super();
     const obj = {} as T;
-    const fields = {} as any;
+    const fields: any = {};
 
     for (let i = 0; i < data.fields.length; i++) {
       const field = data.fields[i];
@@ -32,7 +32,7 @@ export class DataFrameView<T extends object = any> extends FunctionalVector<T> {
       }
 
       fields[field.name] = field;
-      const getter = () => field.values.get(this.index); // .get() to support all Vector types
+      const getter = () => field.values[this.index];
 
       if (!obj.hasOwnProperty(field.name)) {
         Object.defineProperty(obj, field.name, {

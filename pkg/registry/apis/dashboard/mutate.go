@@ -11,7 +11,8 @@ import (
 	"k8s.io/utils/ptr"
 
 	dashboardV0 "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v0alpha1"
-	dashboardV1 "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v1beta1"
+	dashboardV1 "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v1"
+	dashboardV2 "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2"
 	dashboardV2alpha1 "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1"
 	dashboardV2beta1 "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2beta1"
 	"github.com/grafana/grafana/apps/dashboard/pkg/migration"
@@ -26,6 +27,21 @@ func (b *DashboardsAPIBuilder) Mutate(ctx context.Context, a admission.Attribute
 	if op != admission.Create && op != admission.Update {
 		return nil
 	}
+
+	switch a.GetResource().Resource {
+	case dashboardV0.DASHBOARD_RESOURCE:
+		return b.mutateDashboard(ctx, a)
+
+	case dashboardV0.LIBRARY_PANEL_RESOURCE:
+		return nil // nothing needed
+	case dashboardV0.SNAPSHOT_RESOURCE:
+		return nil
+	}
+
+	return fmt.Errorf("unexpected resource: %+v", a.GetResource())
+}
+
+func (b *DashboardsAPIBuilder) mutateDashboard(ctx context.Context, a admission.Attributes) (err error) {
 	var internalID int64
 	obj := a.GetObject()
 	meta, err := utils.MetaAccessor(obj)
@@ -53,7 +69,7 @@ func (b *DashboardsAPIBuilder) Mutate(ctx context.Context, a admission.Attribute
 			internalID = int64(id)
 		}
 		resourceInfo = dashboardV1.DashboardResourceInfo
-		migrationErr = migration.Migrate(v.Spec.Object, schemaversion.LATEST_VERSION)
+		migrationErr = migration.Migrate(ctx, v.Spec.Object, schemaversion.LATEST_VERSION)
 		if migrationErr != nil {
 			v.Status.Conversion = &dashboardV1.DashboardConversionStatus{
 				Failed: true,
@@ -83,7 +99,15 @@ func (b *DashboardsAPIBuilder) Mutate(ctx context.Context, a admission.Attribute
 		}
 		resourceInfo = dashboardV2beta1.DashboardResourceInfo
 
-		// Noop for V2
+	case *dashboardV2.Dashboard:
+		if v.Spec.Layout.GridLayoutKind == nil && v.Spec.Layout.RowsLayoutKind == nil && v.Spec.Layout.AutoGridLayoutKind == nil && v.Spec.Layout.TabsLayoutKind == nil {
+			v.Spec.Layout.GridLayoutKind = &dashboardV2.DashboardGridLayoutKind{
+				Kind: "GridLayout",
+				Spec: dashboardV2.DashboardGridLayoutSpec{},
+			}
+		}
+		resourceInfo = dashboardV2.DashboardResourceInfo
+
 	default:
 		return fmt.Errorf("mutation error: expected to dashboard, got %T", obj)
 	}

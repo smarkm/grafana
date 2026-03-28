@@ -1,20 +1,49 @@
 import { render, screen, fireEvent } from '@testing-library/react';
+import { type ReactNode } from 'react';
+import { MemoryRouter } from 'react-router-dom-v5-compat';
 
-import { PluginExtensionTypes, PluginExtensionLink } from '@grafana/data';
-import { setPluginLinksHook, UsePluginLinksOptions } from '@grafana/runtime';
+import {
+  PluginExtensionTypes,
+  PluginExtensionLink,
+  ComponentTypeWithExtensionMeta,
+  PluginExtensionDataSourceConfigStatusContext,
+} from '@grafana/data';
+import { setPluginLinksHook, UsePluginLinksOptions, setPluginComponentsHook, config } from '@grafana/runtime';
+import { DashboardLibraryInteractions } from 'app/features/dashboard/dashgrid/DashboardLibrary/interactions';
 
 import { getMockDataSource } from '../mocks/dataSourcesMocks';
 
 import { DataSourceTestingStatus, Props } from './DataSourceTestingStatus';
+import { type SuggestedDashboardsLoaderChildProps } from './SuggestedDashboardsLoader';
 
 // Mock contextSrv
-jest.mock('../../../core/core', () => ({
+jest.mock('app/core/services/context_srv', () => ({
   contextSrv: {
     hasAccessToExplore: jest.fn(() => true),
   },
 }));
 
+jest.mock('app/features/dashboard/dashgrid/DashboardLibrary/interactions', () => ({
+  DashboardLibraryInteractions: {
+    entryPointClicked: jest.fn(),
+  },
+}));
+
+const mockOpenModal = jest.fn();
+let mockLoaderChildProps: SuggestedDashboardsLoaderChildProps = {
+  fetchStatus: 'done',
+  hasDashboards: true,
+  triggerFetch: jest.fn(),
+  openModal: mockOpenModal,
+};
+
+jest.mock('./SuggestedDashboardsLoader', () => ({
+  SuggestedDashboardsLoader: ({ children }: { children: (props: SuggestedDashboardsLoaderChildProps) => ReactNode }) =>
+    children(mockLoaderChildProps),
+}));
+
 setPluginLinksHook(() => ({ links: [], isLoading: false }));
+setPluginComponentsHook(() => ({ components: [], isLoading: false }));
 
 const getProps = (partialProps?: Partial<Props>): Props => ({
   testingStatus: {
@@ -140,6 +169,7 @@ describe('<DataSourceTestingStatus />', () => {
     afterEach(() => {
       // Reset the hook to default empty state
       setPluginLinksHook(() => ({ links: [], isLoading: false }));
+      setPluginComponentsHook(() => ({ components: [], isLoading: false }));
     });
 
     it('should render plugin links when severity is error and links exist', () => {
@@ -269,6 +299,299 @@ describe('<DataSourceTestingStatus />', () => {
       render(<DataSourceTestingStatus {...props} />);
 
       expect(screen.queryByText('Help Documentation')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Plugin components', () => {
+    const createMockComponent = (
+      overrides: Partial<{
+        id: string;
+        title: string;
+        description: string;
+        pluginId: string;
+        text: string;
+      }> = {}
+    ) => {
+      const text = overrides.text ?? 'Test Component';
+      const Comp = ((_props: PluginExtensionDataSourceConfigStatusContext) => (
+        <div>{text}</div>
+      )) as ComponentTypeWithExtensionMeta<PluginExtensionDataSourceConfigStatusContext>;
+      Object.assign(Comp, {
+        meta: {
+          id: overrides.id ?? 'test-component',
+          type: PluginExtensionTypes.component,
+          title: overrides.title ?? 'Test Component',
+          description: overrides.description ?? 'Test component description',
+          pluginId: overrides.pluginId ?? 'grafana-monitoring-app',
+        },
+      });
+
+      return Comp;
+    };
+
+    afterEach(() => {
+      setPluginComponentsHook(() => ({ components: [], isLoading: false }));
+    });
+
+    it('should render plugin component from allowed plugin', () => {
+      const AllowedComponent = createMockComponent({
+        pluginId: 'grafana-monitoring-app',
+        text: 'Allowed Component',
+      }) as unknown as ComponentTypeWithExtensionMeta<{}>;
+      setPluginComponentsHook(() => ({ components: [AllowedComponent], isLoading: false }));
+
+      render(<DataSourceTestingStatus {...getProps()} />);
+
+      expect(screen.getByText('Allowed Component')).toBeInTheDocument();
+    });
+
+    it('should NOT render plugin component from non-allowed plugin', () => {
+      const BlockedComponent = createMockComponent({
+        pluginId: 'not-allowed-plugin',
+        text: 'Blocked Component',
+      }) as unknown as ComponentTypeWithExtensionMeta<{}>;
+      setPluginComponentsHook(() => ({ components: [BlockedComponent], isLoading: false }));
+
+      render(<DataSourceTestingStatus {...getProps()} />);
+
+      expect(screen.queryByText('Blocked Component')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Suggested dashboards', () => {
+    const successWithDetails = (overrides?: Partial<Props>): Props =>
+      getProps({
+        testingStatus: {
+          status: 'success',
+          message: 'Data source is working',
+          details: { message: 'All good' },
+        },
+        ...overrides,
+      });
+
+    beforeEach(() => {
+      config.featureToggles.suggestedDashboards = true;
+      mockOpenModal.mockClear();
+      jest.mocked(DashboardLibraryInteractions.entryPointClicked).mockClear();
+    });
+
+    afterEach(() => {
+      config.featureToggles.suggestedDashboards = false;
+    });
+
+    it('should show a spinner while the loader is loading', () => {
+      mockLoaderChildProps = {
+        fetchStatus: 'idle',
+        hasDashboards: false,
+        triggerFetch: jest.fn(),
+        openModal: mockOpenModal,
+      };
+
+      render(<DataSourceTestingStatus {...successWithDetails()} />);
+
+      expect(screen.getByTestId('Spinner')).toBeInTheDocument();
+      expect(screen.queryByLabelText('Suggested dashboards')).not.toBeInTheDocument();
+    });
+
+    it('should show "suggested dashboards" link when dashboards are available', () => {
+      jest.spyOn(console, 'warn').mockImplementation(() => {});
+      mockLoaderChildProps = {
+        fetchStatus: 'done',
+        hasDashboards: true,
+        triggerFetch: jest.fn(),
+        openModal: mockOpenModal,
+      };
+
+      render(
+        <MemoryRouter>
+          <DataSourceTestingStatus {...successWithDetails()} />
+        </MemoryRouter>
+      );
+
+      expect(screen.getByLabelText('Suggested dashboards')).toBeInTheDocument();
+    });
+
+    it('should not show "suggested dashboards" link when no dashboards are available', () => {
+      mockLoaderChildProps = {
+        fetchStatus: 'done',
+        hasDashboards: false,
+        triggerFetch: jest.fn(),
+        openModal: mockOpenModal,
+      };
+
+      render(
+        <MemoryRouter>
+          <DataSourceTestingStatus {...successWithDetails()} />
+        </MemoryRouter>
+      );
+
+      expect(screen.queryByLabelText('Suggested dashboards')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Create a dashboard')).toBeInTheDocument();
+      expect(screen.getByLabelText('Explore data')).toBeInTheDocument();
+    });
+
+    it('should fire entryPointClicked tracking when clicking the "suggested dashboards" link', () => {
+      mockLoaderChildProps = {
+        fetchStatus: 'done',
+        hasDashboards: true,
+        triggerFetch: jest.fn(),
+        openModal: mockOpenModal,
+      };
+
+      render(
+        <MemoryRouter>
+          <DataSourceTestingStatus {...successWithDetails()} />
+        </MemoryRouter>
+      );
+
+      fireEvent.click(screen.getByLabelText('Suggested dashboards'));
+
+      expect(DashboardLibraryInteractions.entryPointClicked).toHaveBeenCalledWith({
+        entryPoint: 'datasource_page_success_banner',
+        contentKind: 'suggested_dashboards',
+      });
+    });
+
+    it('should call openModal when clicking the "suggested dashboards" link', () => {
+      mockLoaderChildProps = {
+        fetchStatus: 'done',
+        hasDashboards: true,
+        triggerFetch: jest.fn(),
+        openModal: mockOpenModal,
+      };
+
+      render(
+        <MemoryRouter>
+          <DataSourceTestingStatus {...successWithDetails()} />
+        </MemoryRouter>
+      );
+
+      fireEvent.click(screen.getByLabelText('Suggested dashboards'));
+
+      expect(mockOpenModal).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not render the loader when status is error', () => {
+      mockLoaderChildProps = {
+        fetchStatus: 'done',
+        hasDashboards: true,
+        triggerFetch: jest.fn(),
+        openModal: mockOpenModal,
+      };
+
+      render(
+        <DataSourceTestingStatus
+          {...getProps({
+            testingStatus: {
+              status: 'error',
+              message: 'Connection failed',
+              details: { message: 'Some error details' },
+            },
+          })}
+        />
+      );
+
+      expect(screen.queryByTestId('Spinner')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Suggested dashboards')).not.toBeInTheDocument();
+    });
+
+    it('should not render the loader when details are missing', () => {
+      mockLoaderChildProps = {
+        fetchStatus: 'done',
+        hasDashboards: true,
+        triggerFetch: jest.fn(),
+        openModal: mockOpenModal,
+      };
+
+      render(
+        <DataSourceTestingStatus
+          {...getProps({
+            testingStatus: {
+              status: 'success',
+              message: 'Data source is working',
+            },
+          })}
+        />
+      );
+
+      expect(screen.queryByTestId('Spinner')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Suggested dashboards')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Suggested dashboards (feature flag off)', () => {
+    const successWithDetails = (overrides?: Partial<Props>): Props =>
+      getProps({
+        testingStatus: {
+          status: 'success',
+          message: 'Data source is working',
+          details: { message: 'All good' },
+        },
+        ...overrides,
+      });
+
+    beforeEach(() => {
+      jest.spyOn(console, 'warn').mockImplementation(() => {});
+      config.featureToggles.suggestedDashboards = false;
+    });
+
+    afterEach(() => {
+      config.featureToggles.suggestedDashboards = false;
+    });
+
+    it('should render success message without "suggested dashboards" link', () => {
+      mockLoaderChildProps = {
+        fetchStatus: 'done',
+        hasDashboards: true,
+        triggerFetch: jest.fn(),
+        openModal: mockOpenModal,
+      };
+
+      render(
+        <MemoryRouter>
+          <DataSourceTestingStatus {...successWithDetails()} />
+        </MemoryRouter>
+      );
+
+      expect(screen.queryByLabelText('Suggested dashboards')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Create a dashboard')).toBeInTheDocument();
+      expect(screen.getByLabelText('Explore data')).toBeInTheDocument();
+    });
+
+    it('should not render SuggestedDashboardsLoader when flag is off', () => {
+      mockLoaderChildProps = {
+        fetchStatus: 'idle',
+        hasDashboards: false,
+        triggerFetch: jest.fn(),
+        openModal: mockOpenModal,
+      };
+
+      render(
+        <MemoryRouter>
+          <DataSourceTestingStatus {...successWithDetails()} />
+        </MemoryRouter>
+      );
+
+      expect(screen.queryByTestId('Spinner')).not.toBeInTheDocument();
+    });
+
+    it('should not show "suggested dashboards" link even if loader reports hasDashboards=true', () => {
+      mockLoaderChildProps = {
+        fetchStatus: 'done',
+        hasDashboards: true,
+        triggerFetch: jest.fn(),
+        openModal: mockOpenModal,
+      };
+
+      render(
+        <MemoryRouter>
+          <DataSourceTestingStatus {...successWithDetails()} />
+        </MemoryRouter>
+      );
+
+      expect(screen.queryByLabelText('Suggested dashboards')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Create a dashboard')).toBeInTheDocument();
+      expect(screen.getByLabelText('Explore data')).toBeInTheDocument();
     });
   });
 });

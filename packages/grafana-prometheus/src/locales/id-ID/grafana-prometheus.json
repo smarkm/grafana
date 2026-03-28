@@ -413,8 +413,11 @@
         }
       },
       "prom-query-builder-options": {
-        "aria-label-lower-limit-parameter": "Tetapkan batas bawah untuk parameter langkah",
+        "aria-label-exemplars": "Sakelar contoh.",
+        "aria-label-format": "Format kotak kombo",
+        "aria-label-lower-limit-parameter": "Kotak teks langkah minimum, tetapkan batas bawah untuk parameter langkah",
         "aria-label-select-resolution": "Pilih resolusi",
+        "aria-label-type": "Ketik grup tombol radio",
         "format-options": {
           "label-heatmap": "Peta panas",
           "label-table": "Tabel",
@@ -438,6 +441,7 @@
         "title-parsing-error-switch-builder": "Terjadi kesalahan penguraian: Beralih ke mode pembuat?"
       },
       "prom-query-legend-editor": {
+        "aria-label-legend": "Kotak kombo legenda",
         "label-legend": "Legenda",
         "placeholder-select-legend-mode": "Pilih mode legenda",
         "tooltip-legend": "Mengganti nama seri atau templat. Misalnya, {{templateExample}} akan diganti dengan nilai label untuk {{labelName}}."
@@ -482,11 +486,6 @@
         "message-no-metrics-found": "Tidak ada metrik yang ditemukan di sumber data.",
         "name": "Nama",
         "type": "Jenis"
-      },
-      "update-function-args": {
-        "text": {
-          "query-parsing-is-ambiguous": "Penguraian kueri mengalami masalah ketidakjelasan."
-        }
       }
     }
   }

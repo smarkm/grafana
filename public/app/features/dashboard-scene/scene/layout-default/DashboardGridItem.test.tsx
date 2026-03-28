@@ -1,8 +1,11 @@
+import { waitFor } from '@testing-library/react';
+
 import { getPanelPlugin } from '@grafana/data/test';
 import { setPluginImportUtils } from '@grafana/runtime';
 import { SceneGridLayout, SceneVariableSet, TestVariable, VizPanel } from '@grafana/scenes';
 import { ALL_VARIABLE_TEXT, ALL_VARIABLE_VALUE } from 'app/features/variables/constants';
 
+import { DashboardEditActionEvent } from '../../edit-pane/shared';
 import { activateFullSceneTree, buildPanelRepeaterScene } from '../../utils/test-utils';
 import { DashboardScene } from '../DashboardScene';
 
@@ -52,9 +55,9 @@ describe('PanelRepeaterGridItem', () => {
 
     expect(repeater.state.repeatedPanels?.length).toBe(0);
 
-    await new Promise((r) => setTimeout(r, 10));
-
-    expect(repeater.state.repeatedPanels?.length).toBe(4);
+    await waitFor(() => {
+      expect(repeater.state.repeatedPanels?.length).toBe(4);
+    });
   });
 
   it('Should pass isMulti/includeAll values if variable is multi variable and has them set', async () => {
@@ -64,9 +67,9 @@ describe('PanelRepeaterGridItem', () => {
 
     expect(repeater.state.repeatedPanels?.length).toBe(0);
 
-    await new Promise((r) => setTimeout(r, 10));
-
-    expect(repeater.state.repeatedPanels?.length).toBe(4);
+    await waitFor(() => {
+      expect(repeater.state.repeatedPanels?.length).toBe(4);
+    });
 
     // LocalValueVariableState is not exposed, so we build this type casting
     const variableState = repeater.state.repeatedPanels![0].state.$variables?.state.variables[0].state as {
@@ -115,9 +118,9 @@ describe('PanelRepeaterGridItem', () => {
 
     const deactivate = activateFullSceneTree(scene);
 
-    await new Promise((r) => setTimeout(r, 10));
-
-    expect(panel.state.repeatedPanels?.length).toBe(4);
+    await waitFor(() => {
+      expect(panel.state.repeatedPanels?.length).toBe(4);
+    });
 
     const vizPanel = panel.state.body as VizPanel;
 
@@ -126,94 +129,21 @@ describe('PanelRepeaterGridItem', () => {
     // mimic going to panel edit
     deactivate();
 
-    await new Promise((r) => setTimeout(r, 10));
+    await waitFor(() => {
+      expect(panel.state.repeatedPanels?.length).toBe(4);
+    });
 
     vizPanel.setState({ title: 'Changed' });
-
-    panel.editingCompleted(true);
 
     // mimic returning to dashboard
     activateFullSceneTree(scene);
 
-    await new Promise((r) => setTimeout(r, 10));
+    panel.publishEvent(new DashboardEditActionEvent({ source: panel, perform: () => {}, undo: () => {} }), true);
 
-    expect(panel.state.repeatedPanels?.length).toBe(4);
-    expect((panel.state.repeatedPanels![0] as VizPanel).state.title).toBe('Changed');
-  });
-
-  it('Should only redo the repeat of an edited panel, not all panels in dashboard', async () => {
-    const panel = new DashboardGridItem({
-      variableName: 'server',
-      repeatedPanels: [],
-      body: new VizPanel({
-        title: 'Panel $server',
-      }),
+    await waitFor(() => {
+      expect(panel.state.repeatedPanels?.length).toBe(4);
     });
 
-    const panel2 = new DashboardGridItem({
-      variableName: 'server',
-      repeatedPanels: [],
-      body: new VizPanel({
-        title: 'Panel $server 2',
-      }),
-    });
-
-    const variable = new TestVariable({
-      name: 'server',
-      query: 'A.*',
-      value: ALL_VARIABLE_VALUE,
-      text: ALL_VARIABLE_TEXT,
-      isMulti: true,
-      includeAll: true,
-      delayMs: 0,
-      optionsToReturn: [
-        { label: 'A', value: '1' },
-        { label: 'B', value: '2' },
-        { label: 'C', value: '3' },
-        { label: 'D', value: '4' },
-        { label: 'E', value: '5' },
-      ],
-    });
-
-    const scene = new DashboardScene({
-      $variables: new SceneVariableSet({
-        variables: [variable],
-      }),
-      body: new DefaultGridLayoutManager({
-        grid: new SceneGridLayout({
-          children: [panel, panel2],
-        }),
-      }),
-    });
-
-    const deactivate = activateFullSceneTree(scene);
-
-    await new Promise((r) => setTimeout(r, 10));
-
-    expect(panel.state.repeatedPanels?.length).toBe(4);
-
-    const vizPanel = panel.state.body as VizPanel;
-
-    expect(vizPanel.state.title).toBe('Panel $server');
-
-    // mimic going to panel edit
-    deactivate();
-
-    await new Promise((r) => setTimeout(r, 10));
-
-    vizPanel.setState({ title: 'Changed' });
-
-    panel.editingCompleted(true);
-
-    const performRepeatMock = jest.spyOn(panel, 'performRepeat');
-
-    // mimic returning to dashboard
-    activateFullSceneTree(scene);
-
-    await new Promise((r) => setTimeout(r, 10));
-
-    expect(performRepeatMock).toHaveBeenCalledTimes(1); // only for the edited panel
-    expect(panel.state.repeatedPanels?.length).toBe(4);
     expect((panel.state.repeatedPanels![0] as VizPanel).state.title).toBe('Changed');
   });
 
@@ -230,9 +160,10 @@ describe('PanelRepeaterGridItem', () => {
 
     activateFullSceneTree(scene);
 
-    await new Promise((r) => setTimeout(r, 10));
+    await waitFor(() => {
+      expect(repeater.state.body.state.$variables?.state.variables[0].getValue()).toBe('');
+    });
 
-    expect(repeater.state.body.state.$variables?.state.variables[0].getValue()).toBe('');
     console.error = origError;
   });
 

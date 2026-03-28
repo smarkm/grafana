@@ -26,11 +26,11 @@ jobs:
         shell: bash
         run: echo "fetch_depth=$(( ${{ github.event.pull_request.commits }} + 2 ))" >> "$GITHUB_OUTPUT"
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
           fetch-depth: ${{ steps.fetch_depth.outputs.fetch_depth }}
       - name: Trufflehog
-        uses: trufflesecurity/trufflehog@eafb8c5f6a06175141c27f17bcc17941853d0047 # v3.90.0
+        uses: trufflesecurity/trufflehog@116e7171542d2f1dad8810f00dcfacbe0b809183 # v3.92.5
         with:
           extra_args: --results=verified

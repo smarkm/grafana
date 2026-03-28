@@ -5,9 +5,11 @@ import (
 	"errors"
 	"strings"
 
+	claims "github.com/grafana/authlib/types"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/exp/maps"
 
-	claims "github.com/grafana/authlib/types"
 	"github.com/grafana/grafana/pkg/apimachinery/errutil"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/infra/tracing"
@@ -43,7 +45,9 @@ type RBACSync struct {
 }
 
 func (s *RBACSync) SyncPermissionsHook(ctx context.Context, ident *authn.Identity, _ *authn.Request) error {
-	ctx, span := s.tracer.Start(ctx, "rbac.sync.SyncPermissionsHook")
+	ctx, span := s.tracer.Start(ctx, "rbac.sync.SyncPermissionsHook", trace.WithAttributes(
+		attribute.String("ident_uid", ident.UID),
+	))
 	defer span.End()
 
 	if !ident.ClientParams.SyncPermissions {
@@ -63,10 +67,23 @@ func (s *RBACSync) SyncPermissionsHook(ctx context.Context, ident *authn.Identit
 	grouped := accesscontrol.GroupScopesByActionContext(ctx, permissions)
 
 	// Restrict access to the list of actions
-	actionsLookup := ident.ClientParams.FetchPermissionsParams.RestrictedActions
-	if len(actionsLookup) > 0 {
-		filtered := make(map[string][]string, len(actionsLookup))
-		for _, action := range actionsLookup {
+	grafanaRestrictions := ident.ClientParams.FetchPermissionsParams.RestrictedActions
+	k8sRestrictions := ident.ClientParams.FetchPermissionsParams.K8sRestrictedActions
+	if grafanaRestrictions != nil || k8sRestrictions != nil {
+		allowedActions := make([]string, 0, len(grafanaRestrictions)+len(k8sRestrictions))
+
+		// Translate K8s restrictions to Grafana actions
+		k8sPermissions := s.translateK8sPermissions(ctx, k8sRestrictions)
+		for _, perm := range k8sPermissions {
+			allowedActions = append(allowedActions, perm.Action)
+		}
+
+		// Add Grafana actions directly
+		allowedActions = append(allowedActions, grafanaRestrictions...)
+
+		// Filter permissions
+		filtered := make(map[string][]string, len(allowedActions))
+		for _, action := range allowedActions {
 			if scopes, ok := grouped[action]; ok {
 				filtered[action] = scopes
 			}

@@ -9,10 +9,13 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"time"
 
 	"github.com/fullstorydev/grpchan"
+	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
@@ -21,6 +24,7 @@ import (
 	"github.com/grafana/authlib/types"
 	decryptv1beta1 "github.com/grafana/grafana/apps/secret/decrypt/v1beta1"
 	secretv1beta1 "github.com/grafana/grafana/apps/secret/pkg/apis/secret/v1beta1"
+	"github.com/grafana/grafana/apps/secret/pkg/decrypt"
 	"github.com/grafana/grafana/pkg/registry/apis/secret/contracts"
 )
 
@@ -30,7 +34,7 @@ type GRPCDecryptClient struct {
 	tokenExchanger authnlib.TokenExchanger
 }
 
-var _ contracts.DecryptService = &GRPCDecryptClient{}
+var _ decrypt.DecryptService = &GRPCDecryptClient{}
 
 type TLSConfig struct {
 	UseTLS             bool
@@ -39,8 +43,8 @@ type TLSConfig struct {
 	InsecureSkipVerify bool
 }
 
-func NewGRPCDecryptClient(tokenExchanger authnlib.TokenExchanger, tracer trace.Tracer, address string) (*GRPCDecryptClient, error) {
-	return NewGRPCDecryptClientWithTLS(tokenExchanger, tracer, address, TLSConfig{})
+func NewGRPCDecryptClient(tokenExchanger authnlib.TokenExchanger, tracer trace.Tracer, address string, clientLoadBalancingEnabled bool) (*GRPCDecryptClient, error) {
+	return NewGRPCDecryptClientWithTLS(tokenExchanger, tracer, address, TLSConfig{}, clientLoadBalancingEnabled)
 }
 
 func NewGRPCDecryptClientWithTLS(
@@ -48,6 +52,7 @@ func NewGRPCDecryptClientWithTLS(
 	tracer trace.Tracer,
 	address string,
 	tlsConfig TLSConfig,
+	clientLoadBalancingEnabled bool,
 ) (*GRPCDecryptClient, error) {
 	var opts []grpc.DialOption
 	if tlsConfig.UseTLS {
@@ -60,6 +65,24 @@ func NewGRPCDecryptClientWithTLS(
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
+
+	if clientLoadBalancingEnabled {
+		// Use round_robin to balances requests more evenly over the available replicas.
+		opts = append(opts, grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"round_robin"}`))
+
+		// Disable looking up service config from TXT DNS records.
+		// This reduces the number of requests made to the DNS servers.
+		opts = append(opts, grpc.WithDisableServiceConfig())
+	}
+
+	// Add retry interceptor to retry on transient connection issues.
+	// Retries on ResourceExhausted (per-RPC limits reached) and Unavailable (system unavailable).
+	retryInterceptor := grpc_retry.UnaryClientInterceptor(
+		grpc_retry.WithMax(3),
+		grpc_retry.WithBackoff(grpc_retry.BackoffExponentialWithJitter(time.Second, 0.5)),
+		grpc_retry.WithCodes(codes.ResourceExhausted, codes.Unavailable),
+	)
+	opts = append(opts, grpc.WithUnaryInterceptor(retryInterceptor))
 
 	conn, err := grpc.NewClient(address, opts...)
 	if err != nil {
@@ -101,7 +124,7 @@ func createTLSCredentials(config TLSConfig) (credentials.TransportCredentials, e
 }
 
 // Decrypt a set of secure value names in a given namespace for a specific service name.
-func (g *GRPCDecryptClient) Decrypt(ctx context.Context, serviceName string, namespace string, names ...string) (map[string]contracts.DecryptResult, error) {
+func (g *GRPCDecryptClient) Decrypt(ctx context.Context, serviceName string, namespace string, names ...string) (map[string]decrypt.DecryptResult, error) {
 	_, err := types.ParseNamespace(namespace)
 	if err != nil {
 		return nil, err
@@ -114,7 +137,7 @@ func (g *GRPCDecryptClient) Decrypt(ctx context.Context, serviceName string, nam
 		}
 	}
 	if len(unique) < 1 {
-		return map[string]contracts.DecryptResult{}, nil
+		return map[string]decrypt.DecryptResult{}, nil
 	}
 
 	tokenExchangerInterceptor := authnlib.NewGrpcClientInterceptor(
@@ -149,14 +172,14 @@ func (g *GRPCDecryptClient) Decrypt(ctx context.Context, serviceName string, nam
 		return nil, fmt.Errorf("grpc decrypt failed: %w", err)
 	}
 
-	results := make(map[string]contracts.DecryptResult, len(resp.GetDecryptedValues()))
+	results := make(map[string]decrypt.DecryptResult, len(resp.GetDecryptedValues()))
 
 	for name, result := range resp.GetDecryptedValues() {
 		if result.GetErrorMessage() != "" {
-			results[name] = contracts.NewDecryptResultErr(errors.New(result.GetErrorMessage()))
+			results[name] = decrypt.NewDecryptResultErr(errors.New(result.GetErrorMessage()))
 		} else {
 			exposedSecureValue := secretv1beta1.NewExposedSecureValue(result.GetValue())
-			results[name] = contracts.NewDecryptResultValue(&exposedSecureValue)
+			results[name] = decrypt.NewDecryptResultValue(&exposedSecureValue)
 		}
 	}
 

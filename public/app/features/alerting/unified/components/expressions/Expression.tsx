@@ -1,6 +1,6 @@
 import { css, cx } from '@emotion/css';
 import { uniqueId } from 'lodash';
-import { FC, useCallback, useState } from 'react';
+import { FC, Suspense, lazy, useCallback, useState } from 'react';
 import { useFormContext } from 'react-hook-form';
 
 import {
@@ -18,7 +18,6 @@ import { ClassicConditions } from 'app/features/expressions/components/ClassicCo
 import { Math } from 'app/features/expressions/components/Math';
 import { Reduce } from 'app/features/expressions/components/Reduce';
 import { Resample } from 'app/features/expressions/components/Resample';
-import { SqlExpr } from 'app/features/expressions/components/SqlExpr';
 import { Threshold } from 'app/features/expressions/components/Threshold';
 import {
   ExpressionQuery,
@@ -38,6 +37,12 @@ import { AlertStateTag } from '../rules/AlertStateTag';
 import { ExpressionStatusIndicator } from './ExpressionStatusIndicator';
 import { formatLabels, formatSeriesValue, getSeriesLabels, getSeriesName, getSeriesValue, isEmptySeries } from './util';
 
+const SqlExpr = lazy(() =>
+  import('app/features/expressions/components/SqlExpressions/SqlExpr').then((module) => ({
+    default: module.SqlExpr,
+  }))
+);
+
 interface ExpressionProps {
   isAlertCondition?: boolean;
   data?: PanelData;
@@ -48,7 +53,6 @@ interface ExpressionProps {
   onSetCondition: (refId: string) => void;
   onUpdateRefId: (oldRefId: string, newRefId: string) => void;
   onRemoveExpression: (refId: string) => void;
-  onUpdateExpressionType: (refId: string, type: ExpressionQueryType) => void;
   onChangeQuery: (query: ExpressionQuery) => void;
 }
 
@@ -62,7 +66,6 @@ export const Expression: FC<ExpressionProps> = ({
   onSetCondition,
   onUpdateRefId,
   onRemoveExpression,
-  onUpdateExpressionType, // this method is not used? maybe we should remove it
   onChangeQuery,
 }) => {
   const styles = useStyles2(getStyles);
@@ -134,13 +137,15 @@ export const Expression: FC<ExpressionProps> = ({
 
         case ExpressionQueryType.sql:
           return (
-            <SqlExpr
-              onChange={(query) => onChangeQuery(query)}
-              query={query}
-              refIds={availableRefIds}
-              alerting
-              queries={[]}
-            />
+            <Suspense fallback={null}>
+              <SqlExpr
+                onChange={(query) => onChangeQuery(query)}
+                query={query}
+                refIds={availableRefIds}
+                alerting
+                queries={[]}
+              />
+            </Suspense>
           );
 
         default:
@@ -541,6 +546,7 @@ const getStyles = (theme: GrafanaTheme2) => ({
       flex: 1,
       flexBasis: '400px',
       borderRadius: theme.shape.radius.default,
+      overflow: 'hidden',
     }),
     stack: css({
       display: 'flex',

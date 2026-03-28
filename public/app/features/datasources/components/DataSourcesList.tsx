@@ -6,12 +6,13 @@ import { DataSourceSettings, GrafanaTheme2 } from '@grafana/data';
 import { Trans, t } from '@grafana/i18n';
 import { config, useFavoriteDatasources, FavoriteDatasources } from '@grafana/runtime';
 import { EmptyState, LinkButton, TextLink, useStyles2 } from '@grafana/ui';
-import { contextSrv } from 'app/core/core';
 import { useQueryParams } from 'app/core/hooks/useQueryParams';
+import { contextSrv } from 'app/core/services/context_srv';
 import { AccessControlAction } from 'app/types/accessControl';
 import { StoreState, useSelector } from 'app/types/store';
 
 import { ROUTES } from '../../connections/constants';
+import { useDatasourceFailureByUID } from '../../connections/hooks/useDatasourceAdvisorChecks';
 import { useLoadDataSources } from '../state/hooks';
 import { getDataSources, getDataSourcesCount } from '../state/selectors';
 import { trackDataSourcesListViewed } from '../tracking';
@@ -74,6 +75,7 @@ export function DataSourcesListView({
 }: ViewProps) {
   const styles = useStyles2(getStyles);
   const location = useLocation();
+  const { datasourceFailureByUID } = useDatasourceFailureByUID();
   const favoritesCheckbox =
     favoriteDataSources?.enabled && handleFavoritesCheckboxChange && showFavoritesOnly !== undefined
       ? {
@@ -129,15 +131,20 @@ export function DataSourcesListView({
         .map((_, index) => <DataSourcesListCard.Skeleton key={index} hasExploreRights={hasExploreRights} />);
     }
 
-    return dataSources.map((dataSource) => (
-      <li key={dataSource.uid}>
-        <DataSourcesListCard
-          dataSource={dataSource}
-          hasWriteRights={hasWriteRights}
-          hasExploreRights={hasExploreRights}
-        />
-      </li>
-    ));
+    return dataSources.map((dataSource) => {
+      const failure = datasourceFailureByUID.get(dataSource.uid);
+
+      return (
+        <li key={dataSource.uid}>
+          <DataSourcesListCard
+            dataSource={dataSource}
+            hasWriteRights={hasWriteRights}
+            hasExploreRights={hasExploreRights}
+            failure={failure}
+          />
+        </li>
+      );
+    });
   };
 
   return (
@@ -160,7 +167,7 @@ const getStyles = (theme: GrafanaTheme2) => {
     list: css({
       listStyle: 'none',
       display: 'grid',
-      // gap: '8px', Add back when legacy support for old Card interface is dropped
+      gap: theme.spacing(1),
     }),
   };
 };

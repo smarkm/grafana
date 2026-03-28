@@ -22,25 +22,18 @@ const (
 	alertmanagerDefaultReconnectTimeout   = alertingCluster.DefaultReconnectTimeout
 	alertmanagerDefaultPushPullInterval   = alertingCluster.DefaultPushPullInterval
 	alertmanagerDefaultConfigPollInterval = time.Minute
+	AlertBroadcastDefaultQueueSize        = 200
 	alertmanagerRedisDefaultMaxConns      = 5
 	// To start, the alertmanager needs at least one route defined.
 	// TODO: we should move this to Grafana settings and define this as the default.
 	alertmanagerDefaultConfiguration = `{
 	"alertmanager_config": {
 		"route": {
-			"receiver": "grafana-default-email",
+			"receiver": "empty",
 			"group_by": ["grafana_folder", "alertname"]
 		},
 		"receivers": [{
-			"name": "grafana-default-email",
-			"grafana_managed_receiver_configs": [{
-				"uid": "",
-				"name": "email receiver",
-				"type": "email",
-				"settings": {
-					"addresses": "<example@email.com>"
-				}
-			}]
+			"name": "empty"
 		}]
 	}
 }
@@ -51,6 +44,9 @@ const (
 	schedulerDefaultAdminConfigPollInterval = time.Minute
 	schedulerDefaultExecuteAlerts           = true
 	schedulerDefaultMaxAttempts             = 3
+	schedulerDefaultInitialRetryDelay       = 1 * time.Second
+	schedulerDefaultMaxRetryDelay           = 4 * time.Second
+	schedulerDefaultRandomizationFactor     = 0.1
 	schedulerDefaultLegacyMinInterval       = 1
 	screenshotsDefaultCapture               = false
 	screenshotsDefaultCaptureTimeout        = 10 * time.Second
@@ -78,42 +74,47 @@ var (
 )
 
 type UnifiedAlertingSettings struct {
-	AdminConfigPollInterval         time.Duration
-	AlertmanagerConfigPollInterval  time.Duration
-	AlertmanagerMaxSilenceSizeBytes int
-	AlertmanagerMaxSilencesCount    int
-	HAListenAddr                    string
-	HAAdvertiseAddr                 string
-	HAPeers                         []string
-	HAPeerTimeout                   time.Duration
-	HAGossipInterval                time.Duration
-	HAReconnectTimeout              time.Duration
-	HAPushPullInterval              time.Duration
-	HALabel                         string
-	HARedisClusterModeEnabled       bool
-	HARedisSentinelModeEnabled      bool
-	HARedisSentinelMasterName       string
-	HARedisSentinelUsername         string
-	HARedisSentinelPassword         string
-	HARedisAddr                     string
-	HARedisPeerName                 string
-	HARedisPrefix                   string
-	HARedisUsername                 string
-	HARedisPassword                 string
-	HARedisDB                       int
-	HARedisMaxConns                 int
-	HARedisTLSEnabled               bool
-	HARedisTLSConfig                dstls.ClientConfig
-	InitializationTimeout           time.Duration
-	MaxAttempts                     int64
-	MinInterval                     time.Duration
-	EvaluationTimeout               time.Duration
-	EvaluationResultLimit           int
-	DisableJitter                   bool
-	ExecuteAlerts                   bool
-	DefaultConfiguration            string
-	Enabled                         *bool // determines whether unified alerting is enabled. If it is nil then user did not define it and therefore its value will be determined during migration. Services should not use it directly.
-	DisabledOrgs                    map[int64]struct{}
+	AdminConfigPollInterval                   time.Duration
+	AlertmanagerConfigPollInterval            time.Duration
+	AlertmanagerMaxSilenceSizeBytes           int
+	AlertmanagerMaxSilencesCount              int
+	HAListenAddr                              string
+	HAAdvertiseAddr                           string
+	HAPeers                                   []string
+	HAPeerTimeout                             time.Duration
+	HAGossipInterval                          time.Duration
+	HAReconnectTimeout                        time.Duration
+	HAPushPullInterval                        time.Duration
+	HALabel                                   string
+	HARedisClusterModeEnabled                 bool
+	HARedisSentinelModeEnabled                bool
+	HARedisSentinelMasterName                 string
+	HARedisSentinelUsername                   string
+	HARedisSentinelPassword                   string
+	HARedisAddr                               string
+	HARedisPeerName                           string
+	HARedisPrefix                             string
+	HARedisUsername                           string
+	HARedisPassword                           string
+	HARedisDB                                 int
+	HARedisMaxConns                           int
+	HARedisTLSEnabled                         bool
+	HARedisTLSConfig                          dstls.ClientConfig
+	HASingleNodeEvaluation                    bool
+	HASingleEvaluationAlertBroadcastQueueSize int
+	InitializationTimeout                     time.Duration
+	MaxAttempts                               int64
+	InitialRetryDelay                         time.Duration
+	MaxRetryDelay                             time.Duration
+	RandomizationFactor                       float64
+	MinInterval                               time.Duration
+	EvaluationTimeout                         time.Duration
+	EvaluationResultLimit                     int
+	DisableJitter                             bool
+	ExecuteAlerts                             bool
+	DefaultConfiguration                      string
+	Enabled                                   *bool // determines whether unified alerting is enabled. If it is nil then user did not define it and therefore its value will be determined during migration. Services should not use it directly.
+	DisabledOrgs                              map[int64]struct{}
 	// BaseInterval interval of time the scheduler updates the rules and evaluates rules.
 	// Only for internal use and not user configuration.
 	BaseInterval time.Duration
@@ -128,10 +129,11 @@ type UnifiedAlertingSettings struct {
 	PrometheusConversion          UnifiedAlertingPrometheusConversionSettings
 
 	// MaxStateSaveConcurrency controls the number of goroutines (per rule) that can save alert state in parallel.
-	MaxStateSaveConcurrency    int
-	StatePeriodicSaveInterval  time.Duration
-	StatePeriodicSaveBatchSize int
-	RulesPerRuleGroupLimit     int64
+	MaxStateSaveConcurrency        int
+	StatePeriodicSaveInterval      time.Duration
+	StatePeriodicSaveBatchSize     int
+	StatePeriodicSaveJitterEnabled bool
+	RulesPerRuleGroupLimit         int64
 
 	// Retention period for Alertmanager notification log entries.
 	NotificationLogRetention time.Duration
@@ -146,6 +148,13 @@ type UnifiedAlertingSettings struct {
 
 	// DeletedRuleRetention defines the maximum duration to retain deleted alerting rules before permanent removal.
 	DeletedRuleRetention time.Duration
+
+	// AlertmanagerMaxTemplateOutputSize specifies the maximum allowed size for rendered template output in bytes.
+	AlertmanagerMaxTemplateOutputSize int64
+
+	BacktestingMaxEvaluations int
+
+	IgnorePendingForNoDataAndError bool
 }
 
 type RecordingRuleSettings struct {
@@ -180,6 +189,8 @@ type UnifiedAlertingReservedLabelSettings struct {
 type UnifiedAlertingPrometheusConversionSettings struct {
 	// RuleQueryOffset defines a time offset to apply to rule queries during conversion from Prometheus to Grafana format
 	RuleQueryOffset time.Duration
+	// DefaultDatasourceUID is the default datasource UID to use when converting Prometheus rules if not specified via header
+	DefaultDatasourceUID string
 }
 
 type UnifiedAlertingLokiSettings struct {
@@ -334,6 +345,8 @@ func (cfg *Cfg) ReadUnifiedAlertingSettings(iniFile *ini.File) error {
 	uaCfg.HARedisTLSConfig.InsecureSkipVerify = ua.Key("ha_redis_tls_insecure_skip_verify").MustBool(false)
 	uaCfg.HARedisTLSConfig.CipherSuites = ua.Key("ha_redis_tls_cipher_suites").MustString("")
 	uaCfg.HARedisTLSConfig.MinVersion = ua.Key("ha_redis_tls_min_version").MustString("")
+	uaCfg.HASingleNodeEvaluation = ua.Key("ha_single_node_evaluation").MustBool(false)
+	uaCfg.HASingleEvaluationAlertBroadcastQueueSize = ua.Key("ha_single_evaluation_alert_broadcast_queue_size").MustInt(AlertBroadcastDefaultQueueSize)
 
 	// TODO load from ini file
 	uaCfg.DefaultConfiguration = alertmanagerDefaultConfiguration
@@ -362,6 +375,27 @@ func (cfg *Cfg) ReadUnifiedAlertingSettings(iniFile *ini.File) error {
 	uaCfg.EvaluationTimeout = uaEvaluationTimeout
 
 	uaCfg.MaxAttempts = ua.Key("max_attempts").MustInt64(schedulerDefaultMaxAttempts)
+
+	uaInitialRetryDelay, err := gtime.ParseDuration(valueAsString(ua, "initial_retry_delay", schedulerDefaultInitialRetryDelay.String()))
+	if err != nil {
+		cfg.Logger.Warn("failed to parse setting 'initial_retry_delay' as duration, falling back to the default value", "error", err, "default", schedulerDefaultInitialRetryDelay)
+		uaInitialRetryDelay = schedulerDefaultInitialRetryDelay
+	}
+	uaCfg.InitialRetryDelay = uaInitialRetryDelay
+
+	uaMaxRetryDelay, err := gtime.ParseDuration(valueAsString(ua, "max_retry_delay", schedulerDefaultMaxRetryDelay.String()))
+	if err != nil {
+		cfg.Logger.Warn("failed to parse setting 'max_retry_delay' as duration, falling back to the default value", "error", err, "default", schedulerDefaultMaxRetryDelay)
+		uaMaxRetryDelay = schedulerDefaultMaxRetryDelay
+	}
+	uaCfg.MaxRetryDelay = uaMaxRetryDelay
+
+	uaRandomizationFactor := ua.Key("randomization_factor").MustFloat64(schedulerDefaultRandomizationFactor)
+	if uaRandomizationFactor < 0 || uaRandomizationFactor > 1 {
+		cfg.Logger.Warn("randomization_factor must be between 0 and 1, falling back to the default value", "value", uaRandomizationFactor, "default", schedulerDefaultRandomizationFactor)
+		uaRandomizationFactor = schedulerDefaultRandomizationFactor
+	}
+	uaCfg.RandomizationFactor = uaRandomizationFactor
 
 	uaCfg.BaseInterval = SchedulerBaseInterval
 
@@ -505,7 +539,8 @@ func (cfg *Cfg) ReadUnifiedAlertingSettings(iniFile *ini.File) error {
 
 	prometheusConversion := iniFile.Section("unified_alerting.prometheus_conversion")
 	uaCfg.PrometheusConversion = UnifiedAlertingPrometheusConversionSettings{
-		RuleQueryOffset: prometheusConversion.Key("rule_query_offset").MustDuration(time.Minute),
+		RuleQueryOffset:      prometheusConversion.Key("rule_query_offset").MustDuration(time.Minute),
+		DefaultDatasourceUID: prometheusConversion.Key("default_datasource_uid").MustString(""),
 	}
 
 	rr := iniFile.Section("recording_rules")
@@ -533,6 +568,8 @@ func (cfg *Cfg) ReadUnifiedAlertingSettings(iniFile *ini.File) error {
 
 	uaCfg.StatePeriodicSaveBatchSize = ua.Key("state_periodic_save_batch_size").MustInt(1)
 
+	uaCfg.StatePeriodicSaveJitterEnabled = ua.Key("state_periodic_save_jitter_enabled").MustBool(false)
+
 	uaCfg.NotificationLogRetention, err = gtime.ParseDuration(valueAsString(ua, "notification_log_retention", (5 * 24 * time.Hour).String()))
 	if err != nil {
 		return err
@@ -551,6 +588,16 @@ func (cfg *Cfg) ReadUnifiedAlertingSettings(iniFile *ini.File) error {
 	uaCfg.DeletedRuleRetention = ua.Key("deleted_rule_retention").MustDuration(30 * 24 * time.Hour)
 	if uaCfg.DeletedRuleRetention < 0 {
 		return fmt.Errorf("setting 'deleted_rule_retention' is invalid, only 0 or a positive duration are allowed")
+	}
+
+	uaCfg.AlertmanagerMaxTemplateOutputSize = ua.Key("alertmanager_max_template_output_bytes").MustInt64(10485760)
+	if uaCfg.AlertmanagerMaxTemplateOutputSize < 0 {
+		return fmt.Errorf("setting 'alertmanager_max_template_output_bytes' is invalid, only 0 or a positive integer are allowed")
+	}
+
+	uaCfg.BacktestingMaxEvaluations = ua.Key("backtesting_max_evaluations").MustInt(100)
+	if uaCfg.BacktestingMaxEvaluations < 0 {
+		uaCfg.BacktestingMaxEvaluations = 100
 	}
 
 	cfg.UnifiedAlerting = uaCfg

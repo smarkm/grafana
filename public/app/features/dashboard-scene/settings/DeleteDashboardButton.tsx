@@ -7,6 +7,7 @@ import { Button, ConfirmModal, Modal, Space, Text, TextLink } from '@grafana/ui'
 import { DeleteProvisionedDashboardDrawer } from 'app/features/provisioning/components/Dashboards/DeleteProvisionedDashboardDrawer';
 
 import { useDeleteDashboardsMutation } from '../../browse-dashboards/api/browseDashboardsAPI';
+import { DeletedDashboardsInfo } from '../../browse-dashboards/components/DeletedDashboardsInfo';
 import { DashboardScene } from '../scene/DashboardScene';
 
 interface ButtonProps {
@@ -78,12 +79,7 @@ export function DeleteDashboardModal({ dashboardTitle, onConfirm, onClose }: Del
         <>
           {config.featureToggles.restoreDashboards && (
             <>
-              <Text element="p">
-                <Trans i18nKey="dashboard-settings.delete-modal-restore-dashboards-text">
-                  This action will mark the dashboard for deletion in 30 days. Your organization administrator can
-                  restore it anytime before the 30 days expire.
-                </Trans>
-              </Text>
+              <DeletedDashboardsInfo target="dashboard" />
               <Space v={1} />
             </>
           )}
@@ -97,7 +93,6 @@ export function DeleteDashboardModal({ dashboardTitle, onConfirm, onClose }: Del
       onConfirm={onConfirm}
       onDismiss={onClose}
       title={t('dashboard-settings.delete-modal.title', 'Delete')}
-      icon="trash-alt"
       confirmText={t('dashboard-settings.delete-modal.delete-button', 'Delete')}
       confirmationText={t('dashboard-settings.delete-modal.confirmation-text', 'Delete')}
     />
@@ -112,7 +107,6 @@ function ProvisionedDeleteModal({ dashboardId, onClose }: ProvisionedDeleteModal
         'dashboard-scene.provisioned-delete-modal.title-cannot-delete-provisioned-dashboard',
         'Cannot delete provisioned dashboard'
       )}
-      icon="trash-alt"
       onDismiss={onClose}
     >
       <p>

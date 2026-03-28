@@ -29,12 +29,15 @@ type fakeCWLogsClient struct {
 	queryResults   cloudwatchlogs.GetQueryResultsOutput
 
 	logGroupsIndex int
+
+	anomalies []cloudwatchlogstypes.Anomaly
 }
 
 type logsQueryCalls struct {
 	startQuery        []*cloudwatchlogs.StartQueryInput
 	getEvents         []*cloudwatchlogs.GetLogEventsInput
 	describeLogGroups []*cloudwatchlogs.DescribeLogGroupsInput
+	listAnomalies     []*cloudwatchlogs.ListAnomaliesInput
 }
 
 func (m *fakeCWLogsClient) GetQueryResults(_ context.Context, _ *cloudwatchlogs.GetQueryResultsInput, _ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.GetQueryResultsOutput, error) {
@@ -52,6 +55,14 @@ func (m *fakeCWLogsClient) StartQuery(_ context.Context, input *cloudwatchlogs.S
 func (m *fakeCWLogsClient) StopQuery(_ context.Context, _ *cloudwatchlogs.StopQueryInput, _ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.StopQueryOutput, error) {
 	return &cloudwatchlogs.StopQueryOutput{
 		Success: true,
+	}, nil
+}
+
+func (m *fakeCWLogsClient) ListAnomalies(_ context.Context, input *cloudwatchlogs.ListAnomaliesInput, _ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.ListAnomaliesOutput, error) {
+	m.calls.listAnomalies = append(m.calls.listAnomalies, input)
+
+	return &cloudwatchlogs.ListAnomaliesOutput{
+		Anomalies: m.anomalies,
 	}, nil
 }
 
@@ -78,6 +89,11 @@ func (m *mockLogsSyncClient) GetQueryResults(ctx context.Context, input *cloudwa
 func (m *mockLogsSyncClient) StartQuery(ctx context.Context, input *cloudwatchlogs.StartQueryInput, optFns ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.StartQueryOutput, error) {
 	args := m.Called(ctx, input, optFns)
 	return args.Get(0).(*cloudwatchlogs.StartQueryOutput), args.Error(1)
+}
+
+func (m *mockLogsSyncClient) ListAnomalies(ctx context.Context, input *cloudwatchlogs.ListAnomaliesInput, optFns ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.ListAnomaliesOutput, error) {
+	args := m.Called(ctx, input, optFns)
+	return args.Get(0).(*cloudwatchlogs.ListAnomaliesOutput), args.Error(1)
 }
 
 func (m *fakeCWLogsClient) DescribeLogGroups(_ context.Context, input *cloudwatchlogs.DescribeLogGroupsInput, _ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.DescribeLogGroupsOutput, error) {
@@ -142,7 +158,7 @@ type oldEC2Client struct {
 }
 
 func (c oldEC2Client) DescribeRegions(_ context.Context, _ *ec2.DescribeRegionsInput, _ ...func(*ec2.Options)) (*ec2.DescribeRegionsOutput, error) {
-	regions := []ec2types.Region{}
+	regions := make([]ec2types.Region, 0, len(c.regions))
 	for _, region := range c.regions {
 		regions = append(regions, ec2types.Region{
 			RegionName: aws.String(region),
@@ -154,7 +170,7 @@ func (c oldEC2Client) DescribeRegions(_ context.Context, _ *ec2.DescribeRegionsI
 }
 
 func (c oldEC2Client) DescribeInstances(_ context.Context, in *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
-	reservations := []ec2types.Reservation{}
+	reservations := make([]ec2types.Reservation, 0, len(c.reservations))
 	for _, r := range c.reservations {
 		instances := []ec2types.Instance{}
 		for _, inst := range r.Instances {

@@ -24,7 +24,7 @@ jobs:
     outputs:
       changed: ${{ steps.detect-changes.outputs.backend }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: true # required to get more history in the changed-files action
           fetch-depth: 2
@@ -45,18 +45,20 @@ jobs:
     steps:
       # Set up repository clone
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - name: Setup Go
-        uses: actions/setup-go@v5.5.0
-        with:
-          go-version-file: go.mod
       - name: Setup Enterprise
         if: ${{ github.event.pull_request.head.repo.fork == false }}
         uses: ./.github/actions/setup-enterprise
         with:
           github-app-name: 'grafana-ci-bot'
+      # Enterprise must be cloned before setup-go so that enterprise
+      # modules are visible when the Go cache key is computed.
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+        with:
+          cache-build: 'false'
 
       - name: Generate Swagger specs
         run: make swagger-clean && make openapi3-gen

@@ -4,6 +4,7 @@ import { useSessionStorage } from 'react-use';
 import { BusEventWithPayload } from '@grafana/data';
 import { t } from '@grafana/i18n';
 import {
+  dataLayers,
   LocalValueVariable,
   SceneGridRow,
   SceneObject,
@@ -12,17 +13,27 @@ import {
   VizPanel,
 } from '@grafana/scenes';
 
+import { DashboardDataLayerSet } from '../scene/DashboardDataLayerSet';
 import { DashboardScene } from '../scene/DashboardScene';
 import { SceneGridRowEditableElement } from '../scene/layout-default/SceneGridRowEditableElement';
-import { redoButtonId, undoButtonID } from '../scene/new-toolbar/RightActions';
 import { EditableDashboardElement, isEditableDashboardElement } from '../scene/types/EditableDashboardElement';
+import { AnnotationEditableElement } from '../settings/annotations/AnnotationEditableElement';
+import { AnnotationSetEditableElement } from '../settings/annotations/AnnotationSetEditableElement';
+import { LinkEdit, LinkEditEditableElement } from '../settings/links/LinkAddEditableElement';
 import { LocalVariableEditableElement } from '../settings/variables/LocalVariableEditableElement';
+import {
+  SectionVariableAdd,
+  SectionVariableAddEditableElement,
+  VariableAdd,
+  VariableAddEditableElement,
+} from '../settings/variables/VariableAddEditableElement';
 import { VariableEditableElement } from '../settings/variables/VariableEditableElement';
 import { VariableSetEditableElement } from '../settings/variables/VariableSetEditableElement';
 import { isSceneVariable } from '../settings/variables/utils';
 
-import { DashboardEditableElement } from './DashboardEditableElement';
 import { VizPanelEditableElement } from './VizPanelEditableElement';
+import { DashboardEditableElement } from './dashboard/DashboardEditableElement';
+import { DashboardEditActionEvent, type DashboardEditActionEventPayload } from './events';
 
 export function useEditPaneCollapsed() {
   return useSessionStorage('grafana.dashboards.edit-pane.isCollapsed', false);
@@ -61,6 +72,26 @@ export function getEditableElementFor(sceneObj: SceneObject | undefined): Editab
     return new VariableEditableElement(sceneObj);
   }
 
+  if (sceneObj instanceof VariableAdd) {
+    return new VariableAddEditableElement(sceneObj);
+  }
+
+  if (sceneObj instanceof SectionVariableAdd) {
+    return new SectionVariableAddEditableElement(sceneObj);
+  }
+
+  if (sceneObj instanceof LinkEdit) {
+    return new LinkEditEditableElement(sceneObj);
+  }
+
+  if (sceneObj instanceof DashboardDataLayerSet) {
+    return new AnnotationSetEditableElement(sceneObj);
+  }
+
+  if (sceneObj instanceof dataLayers.AnnotationsDataLayer) {
+    return new AnnotationEditableElement(sceneObj);
+  }
+
   return undefined;
 }
 
@@ -80,26 +111,11 @@ export class ConditionalRenderingChangedEvent extends BusEventWithPayload<SceneO
   static type = 'conditional-rendering-changed';
 }
 
-export interface DashboardEditActionEventPayload {
-  removedObject?: SceneObject;
-  addedObject?: SceneObject;
-  movedObject?: SceneObject;
-  source: SceneObject;
-  description?: string;
-  perform: () => void;
-  undo: () => void;
+export class RepeatsUpdatedEvent extends BusEventWithPayload<SceneObject> {
+  static type = 'repeats-updated';
 }
 
-export class DashboardEditActionEvent extends BusEventWithPayload<DashboardEditActionEventPayload> {
-  static type = 'dashboard-edit-action';
-}
-
-/**
- * Emitted after DashboardEditActionEvent has been processed (or undone)
- */
-export class DashboardStateChangedEvent extends BusEventWithPayload<{ source: SceneObject }> {
-  static type = 'dashboard-state-changed';
-}
+export { DashboardEditActionEvent, DashboardStateChangedEvent, type DashboardEditActionEventPayload } from './events';
 
 export interface AddElementActionHelperProps {
   addedObject: SceneObject;
@@ -202,7 +218,7 @@ export const dashboardEditActions = {
   }),
 
   addVariable({ source, addedObject }: AddVariableActionHelperProps) {
-    const varsBeforeAddition = [...source.state.variables];
+    const varsBeforeAddition = [...(source.state.variables ?? [])];
 
     dashboardEditActions.addElement({
       source,
@@ -241,10 +257,29 @@ export const dashboardEditActions = {
     description: t('dashboard.variable.description.action', 'Change variable description'),
     prop: 'description',
   }),
-  changeVariableHideValue: makeEditAction<SceneVariable, 'hide'>({
-    description: t('dashboard.variable.hide.action', 'Change variable hide option'),
-    prop: 'hide',
-  }),
+  changeVariableHideValue({ source, oldValue, newValue }: EditActionProps<SceneVariable, 'hide'>) {
+    const variableSet = source.parent;
+    const variablesBeforeChange =
+      variableSet instanceof SceneVariableSet ? [...(variableSet.state.variables ?? [])] : undefined;
+
+    dashboardEditActions.edit({
+      description: t('dashboard.variable.hide.action', 'Change variable hide option'),
+      source,
+      perform: () => {
+        source.setState({ hide: newValue });
+        // Updating the variables set since components that show/hide variables subscribe to the variable set, not the individual variables.
+        if (variableSet instanceof SceneVariableSet) {
+          variableSet.setState({ variables: [...(variableSet.state.variables ?? [])] });
+        }
+      },
+      undo: () => {
+        source.setState({ hide: oldValue });
+        if (variableSet instanceof SceneVariableSet && variablesBeforeChange) {
+          variableSet.setState({ variables: variablesBeforeChange });
+        }
+      },
+    });
+  },
 
   moveElement(props: MoveElementActionHelperProps) {
     const { movedObject, source, perform, undo } = props;
@@ -277,7 +312,7 @@ interface EditActionProps<Source extends SceneObject, T extends keyof Source['st
   newValue: Source['state'][T];
 }
 
-function makeEditAction<Source extends SceneObject, T extends keyof Source['state']>({
+export function makeEditAction<Source extends SceneObject, T extends keyof Source['state']>({
   description,
   prop,
 }: MakeEditActionProps<Source, T>) {
@@ -293,8 +328,4 @@ function makeEditAction<Source extends SceneObject, T extends keyof Source['stat
       },
     });
   };
-}
-
-export function undoRedoWasClicked(e: React.FocusEvent) {
-  return e.relatedTarget && (e.relatedTarget.id === undoButtonID || e.relatedTarget.id === redoButtonId);
 }

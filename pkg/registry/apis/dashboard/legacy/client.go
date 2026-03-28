@@ -45,7 +45,7 @@ func (d *directResourceClient) GetStats(ctx context.Context, in *resourcepb.Reso
 
 // IsHealthy implements ResourceClient.
 func (d *directResourceClient) IsHealthy(ctx context.Context, in *resourcepb.HealthCheckRequest, opts ...grpc.CallOption) (*resourcepb.HealthCheckResponse, error) {
-	return d.server.IsHealthy(ctx, in)
+	return d.server.IsHealthy(ctx, in) //nolint:staticcheck
 }
 
 // List implements ResourceClient.
@@ -89,4 +89,13 @@ func (d *directResourceClient) Watch(ctx context.Context, in *resourcepb.WatchRe
 // BulkProcess implements resource.ResourceClient.
 func (d *directResourceClient) BulkProcess(ctx context.Context, opts ...grpc.CallOption) (resourcepb.BulkStore_BulkProcessClient, error) {
 	return nil, fmt.Errorf("BulkProcess not supported with direct resource client")
+}
+
+// RebuildIndexes implements resource.ResourceClient.
+func (b *directResourceClient) RebuildIndexes(ctx context.Context, req *resourcepb.RebuildIndexesRequest, opts ...grpc.CallOption) (*resourcepb.RebuildIndexesResponse, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (b *directResourceClient) GetQuotaUsage(ctx context.Context, req *resourcepb.QuotaUsageRequest, opts ...grpc.CallOption) (*resourcepb.QuotaUsageResponse, error) {
+	return nil, fmt.Errorf("not implemented")
 }

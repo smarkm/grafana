@@ -1,5 +1,5 @@
 import { cx } from '@emotion/css';
-import { RefCallback, SyntheticEvent, useState } from 'react';
+import { RefCallback, SyntheticEvent, useState, type JSX } from 'react';
 import * as React from 'react';
 import { lastValueFrom } from 'rxjs';
 
@@ -99,7 +99,7 @@ const getTraceProperties = async (
     const result: DataFrame = results.data[0];
     if (result.fields.length > 0) {
       const properties: { [key: string]: Array<{ [key: string]: string | number; count: number }> } = JSON.parse(
-        result.fields[0].values.toArray()[0]
+        result.fields[0].values[0]
       );
       const values = properties[property].map((value) => {
         let label = value[property];

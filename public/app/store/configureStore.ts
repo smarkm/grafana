@@ -2,21 +2,16 @@ import { configureStore as reduxConfigureStore, createListenerMiddleware } from 
 import { setupListeners } from '@reduxjs/toolkit/query';
 import { Middleware } from 'redux';
 
-import { alertingAPI as alertingPackageAPI } from '@grafana/alerting/unstable';
-import { dashboardAPIv0alpha1 } from 'app/api/clients/dashboard/v0alpha1';
+import { generatedAPI as migrateToCloudAPI } from '@grafana/api-clients/internal/rtkq/legacy/migrate-to-cloud';
+import { generatedAPI as preferencesUserAPI } from '@grafana/api-clients/internal/rtkq/legacy/preferences';
+import { generatedAPI as legacyUserAPI } from '@grafana/api-clients/internal/rtkq/legacy/user';
+import { allMiddleware as allApiClientMiddleware } from '@grafana/api-clients/rtkq';
+import { legacyAPI } from 'app/api/clients/legacy';
+import { scopeAPIv0alpha1 } from 'app/api/clients/scope/v0alpha1';
 import { browseDashboardsAPI } from 'app/features/browse-dashboards/api/browseDashboardsAPI';
 import { publicDashboardApi } from 'app/features/dashboard/api/publicDashboardApi';
-import { cloudMigrationAPI } from 'app/features/migrate-to-cloud/api';
-import { userPreferencesAPI } from 'app/features/preferences/api';
 import { StoreState } from 'app/types/store';
 
-import { advisorAPIv0alpha1 } from '../api/clients/advisor/v0alpha1';
-import { folderAPIv1beta1 } from '../api/clients/folder/v1beta1';
-import { iamAPIv0alpha1 } from '../api/clients/iam/v0alpha1';
-import { playlistAPIv0alpha1 } from '../api/clients/playlist/v0alpha1';
-import { provisioningAPIv0alpha1 } from '../api/clients/provisioning/v0alpha1';
-// Used by the API client generator
-// PLOP_INJECT_IMPORT
 import { buildInitialState } from '../core/reducers/navModel';
 import { addReducer, createRootReducer } from '../core/reducers/root';
 import { alertingApi } from '../features/alerting/unified/api/alertingApi';
@@ -43,20 +38,29 @@ export function configureStore(initialState?: Partial<StoreState>) {
     middleware: (getDefaultMiddleware) =>
       getDefaultMiddleware({ thunk: true, serializableCheck: false, immutableCheck: false }).concat(
         listenerMiddleware.middleware,
+
+        // older internal alerting API client
         alertingApi.middleware,
-        alertingPackageAPI.middleware,
+
+        // API clients that are not in the api-clients package
+        // Anything here is likely to be deprecated
         publicDashboardApi.middleware,
         browseDashboardsAPI.middleware,
-        cloudMigrationAPI.middleware,
-        userPreferencesAPI.middleware,
-        iamAPIv0alpha1.middleware,
-        playlistAPIv0alpha1.middleware,
-        provisioningAPIv0alpha1.middleware,
-        folderAPIv1beta1.middleware,
-        advisorAPIv0alpha1.middleware,
-        dashboardAPIv0alpha1.middleware,
-        // PLOP_INJECT_MIDDLEWARE
-        // Used by the API client generator
+
+        // Legacy API clients that come from the api-clients package
+        // (these are not exported in the same way as we avoid including them in the published package)
+        legacyAPI.middleware,
+        migrateToCloudAPI.middleware,
+        preferencesUserAPI.middleware,
+        legacyUserAPI.middleware,
+
+        // Enterprise API clients from the api-clients package
+        scopeAPIv0alpha1.middleware,
+
+        // All api-clients from the api-clients package
+        ...allApiClientMiddleware,
+
+        // Any additional other middleware, configured from enterprise
         ...extraMiddleware
       ),
     devTools: process.env.NODE_ENV !== 'production',

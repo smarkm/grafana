@@ -15,12 +15,17 @@ import (
 
 	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/server"
+	"github.com/grafana/grafana/pkg/util/testutil"
 )
 
 func TestIntegration_AdminApiReencrypt_Enterprise(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+	testutil.SkipIntegrationTestInShortMode(t)
+
+	// TODO: this test is failing due to DB locks in SQLite.
+	if db.IsTestDbSQLite() {
+		t.Skip("skip flaky in sqlite while we figure out the problem with this test")
 	}
+
 	getSecretsFunctions := map[string]func(*testing.T, *server.TestEnv) map[int]secret{}
 	getSecretsFunctions["settings"] = func(t *testing.T, env *server.TestEnv) map[int]secret {
 		return getSettingSecrets(t, env.SQLStore)

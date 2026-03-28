@@ -11,17 +11,20 @@ import {
   SceneVariable,
   SceneVariableSet,
   ScopesVariable,
+  SwitchVariable,
   TextBoxVariable,
 } from '@grafana/scenes';
+import { VariableKind } from '@grafana/schema/apis/dashboard.grafana.app/v2';
 import { DashboardModel } from 'app/features/dashboard/state/DashboardModel';
 
 import { SnapshotVariable } from '../serialization/custom-variables/SnapshotVariable';
+import { createSceneVariableFromVariableModel as createSceneVariableFromVariableModelV2 } from '../serialization/transformSaveModelSchemaV2ToScene';
 
 import { getCurrentValueForOldIntervalModel, getIntervalsFromQueryString } from './utils';
 
 const DEFAULT_DATASOURCE = 'default';
 
-export function createVariablesForDashboard(oldModel: DashboardModel) {
+export function createVariablesForDashboard(oldModel: DashboardModel, defaultVariables: VariableKind[] = []) {
   const variableObjects = oldModel.templating.list
     .map((v) => {
       try {
@@ -35,12 +38,24 @@ export function createVariablesForDashboard(oldModel: DashboardModel) {
     // Added temporarily to allow skipping non-compatible variables
     .filter((v): v is SceneVariable => Boolean(v));
 
-  if (config.featureToggles.scopeFilters) {
+  const defaultVariableObjects = defaultVariables
+    .map((v) => {
+      try {
+        return createSceneVariableFromVariableModelV2(v);
+      } catch (err) {
+        console.error(err);
+        return null;
+      }
+    })
+    .filter((v): v is SceneVariable => Boolean(v));
+
+  // Explicitly disable scopes for public dashboards
+  if (config.featureToggles.scopeFilters && !config.publicDashboardAccessToken) {
     variableObjects.push(new ScopesVariable({ enable: true }));
   }
 
   return new SceneVariableSet({
-    variables: variableObjects,
+    variables: [...defaultVariableObjects, ...variableObjects],
   });
 }
 
@@ -63,9 +78,9 @@ export function createVariablesForSnapshot(oldModel: DashboardModel) {
             baseFilters: v.baseFilters ?? [],
             defaultKeys: v.defaultKeys,
             useQueriesAsFilterForOptions: true,
-            layout: config.featureToggles.newFiltersUI ? 'combobox' : undefined,
+            layout: 'combobox',
             supportsMultiValueOperators: Boolean(
-              getDataSourceSrv().getInstanceSettings(v.datasource)?.meta.multiValueFilterOperators
+              getDataSourceSrv().getInstanceSettings({ type: v.datasource?.type })?.meta.multiValueFilterOperators
             ),
           });
         }
@@ -90,7 +105,17 @@ export function createSnapshotVariable(variable: TypedVariableModel): SceneVaria
   let snapshotVariable: SnapshotVariable;
   let current: { value: string | string[]; text: string | string[] };
   if (variable.type === 'interval') {
-    const intervals = getIntervalsFromQueryString(variable.query);
+    // If query is missing, extract intervals from options instead of using defaults
+    let intervals: string[];
+    if (variable.query) {
+      intervals = getIntervalsFromQueryString(variable.query);
+    } else if (variable.options && variable.options.length > 0) {
+      // Extract intervals from options when query is missing
+      intervals = variable.options.map((opt) => String(opt.value || opt.text)).filter(Boolean);
+    } else {
+      // Fallback to default intervals only if both query and options are missing
+      intervals = getIntervalsFromQueryString('');
+    }
     const currentInterval = getCurrentValueForOldIntervalModel(variable, intervals);
     snapshotVariable = new SnapshotVariable({
       name: variable.name,
@@ -131,7 +156,7 @@ export function createSceneVariableFromVariableModel(variable: TypedVariableMode
     name: variable.name,
     label: variable.label,
     description: variable.description,
-    showInControlsMenu: variable.showInControlsMenu,
+    origin: variable.origin,
   };
   if (variable.type === 'adhoc') {
     const originFilters: AdHocVariableFilter[] = [];
@@ -151,19 +176,24 @@ export function createSceneVariableFromVariableModel(variable: TypedVariableMode
       defaultKeys: variable.defaultKeys,
       allowCustomValue: variable.allowCustomValue,
       useQueriesAsFilterForOptions: true,
-      layout: config.featureToggles.newFiltersUI ? 'combobox' : undefined,
+      drilldownRecommendationsEnabled: config.featureToggles.drilldownRecommendations,
+      layout: 'combobox',
+      collapsible: config.featureToggles.dashboardUnifiedDrilldownControls,
       supportsMultiValueOperators: Boolean(
-        getDataSourceSrv().getInstanceSettings(variable.datasource)?.meta.multiValueFilterOperators
+        getDataSourceSrv().getInstanceSettings({ type: variable.datasource?.type })?.meta.multiValueFilterOperators
       ),
+      enableGroupBy: config.featureToggles.dashboardUnifiedDrilldownControls
+        ? (variable.enableGroupBy ?? false)
+        : false,
     });
   }
+  // Custom variable
   if (variable.type === 'custom') {
     return new CustomVariable({
       ...commonProperties,
       value: variable.current?.value ?? '',
       text: variable.current?.text ?? '',
-
-      query: variable.query,
+      query: variable.query || '',
       isMulti: variable.multi,
       allValue: variable.allValue || undefined,
       includeAll: variable.includeAll,
@@ -171,18 +201,20 @@ export function createSceneVariableFromVariableModel(variable: TypedVariableMode
       skipUrlSync: variable.skipUrlSync,
       hide: variable.hide,
       allowCustomValue: variable.allowCustomValue,
+      valuesFormat: variable.valuesFormat ?? 'csv',
     });
+    // Query variable
   } else if (variable.type === 'query') {
     return new QueryVariable({
       ...commonProperties,
       value: variable.current?.value ?? '',
       text: variable.current?.text ?? '',
-
-      query: variable.query,
+      query: variable.query ?? {},
       datasource: variable.datasource,
       sort: variable.sort,
       refresh: variable.refresh,
       regex: variable.regex,
+      ...(variable.regexApplyTo && { regexApplyTo: variable.regexApplyTo }),
       allValue: variable.allValue || undefined,
       includeAll: variable.includeAll,
       defaultToAll: Boolean(variable.includeAll),
@@ -194,9 +226,11 @@ export function createSceneVariableFromVariableModel(variable: TypedVariableMode
       staticOptions: variable.staticOptions?.map((option) => ({
         label: String(option.text),
         value: String(option.value),
+        properties: option.properties,
       })),
       staticOptionsOrder: variable.staticOptionsOrder,
     });
+    // Datasource variable
   } else if (variable.type === 'datasource') {
     return new DataSourceVariable({
       ...commonProperties,
@@ -213,8 +247,19 @@ export function createSceneVariableFromVariableModel(variable: TypedVariableMode
       defaultOptionEnabled: variable.current?.value === DEFAULT_DATASOURCE && variable.current?.text === 'default',
       allowCustomValue: variable.allowCustomValue,
     });
+    // Interval variable
   } else if (variable.type === 'interval') {
-    const intervals = getIntervalsFromQueryString(variable.query);
+    // If query is missing, extract intervals from options instead of using defaults
+    let intervals: string[];
+    if (variable.query) {
+      intervals = getIntervalsFromQueryString(variable.query);
+    } else if (variable.options && variable.options.length > 0) {
+      // Extract intervals from options when query is missing (matches backend behavior)
+      intervals = variable.options.map((opt) => String(opt.value || opt.text)).filter(Boolean);
+    } else {
+      // Fallback to default intervals only if both query and options are missing
+      intervals = getIntervalsFromQueryString('');
+    }
     const currentInterval = getCurrentValueForOldIntervalModel(variable, intervals);
     return new IntervalVariable({
       ...commonProperties,
@@ -227,6 +272,7 @@ export function createSceneVariableFromVariableModel(variable: TypedVariableMode
       skipUrlSync: variable.skipUrlSync,
       hide: variable.hide,
     });
+    // Constant variable
   } else if (variable.type === 'constant') {
     return new ConstantVariable({
       ...commonProperties,
@@ -234,6 +280,7 @@ export function createSceneVariableFromVariableModel(variable: TypedVariableMode
       skipUrlSync: variable.skipUrlSync,
       hide: variable.hide,
     });
+    // Textbox variable
   } else if (variable.type === 'textbox') {
     let val;
     if (!variable?.current?.value) {
@@ -252,6 +299,7 @@ export function createSceneVariableFromVariableModel(variable: TypedVariableMode
       skipUrlSync: variable.skipUrlSync,
       hide: variable.hide,
     });
+    // Groupby variable
   } else if (config.featureToggles.groupByVariable && variable.type === 'groupby') {
     return new GroupByVariable({
       ...commonProperties,
@@ -260,10 +308,31 @@ export function createSceneVariableFromVariableModel(variable: TypedVariableMode
       text: variable.current?.text || [],
       skipUrlSync: variable.skipUrlSync,
       hide: variable.hide,
+      wideInput: config.featureToggles.dashboardAdHocAndGroupByWrapper,
       // @ts-expect-error
       defaultOptions: variable.options,
       defaultValue: variable.defaultValue,
       allowCustomValue: variable.allowCustomValue,
+      drilldownRecommendationsEnabled: config.featureToggles.drilldownRecommendations,
+    });
+    // Switch variable
+    // In the old variable model we are storing the enabled and disabled values in the options:
+    // the first option is the enabled value and the second is the disabled value
+  } else if (variable.type === 'switch') {
+    const pickFirstValue = (value: string | string[]) => {
+      if (Array.isArray(value)) {
+        return value[0];
+      }
+      return value;
+    };
+
+    return new SwitchVariable({
+      ...commonProperties,
+      value: pickFirstValue(variable.current?.value),
+      enabledValue: pickFirstValue(variable.options?.[0]?.value),
+      disabledValue: pickFirstValue(variable.options?.[1]?.value),
+      skipUrlSync: variable.skipUrlSync,
+      hide: variable.hide,
     });
   } else {
     throw new Error(`Scenes: Unsupported variable type ${variable.type}`);

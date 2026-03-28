@@ -26,6 +26,7 @@ import (
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/tests/testsuite"
 	"github.com/grafana/grafana/pkg/util"
+	"github.com/grafana/grafana/pkg/util/testutil"
 )
 
 // run tests with cleanup
@@ -34,9 +35,8 @@ func TestMain(m *testing.M) {
 }
 
 func TestIntegrationDashboardDataAccess(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	var sqlStore db.DB
 	var cfg *setting.Cfg
 	var savedFolder, savedDash, savedDash2 *dashboards.Dashboard
@@ -52,7 +52,7 @@ func TestIntegrationDashboardDataAccess(t *testing.T) {
 		//   test dash 23
 		//   test dash 45
 		// test dash 67
-		folderStore := folderimpl.ProvideStore(sqlStore)
+		folderStore := folderimpl.ProvideStore(sqlStore, cfg)
 		savedFolder = insertTestDashFolder(t, dashboardStore, folderStore, "1 test dash folder", 1, 0, "", "prod", "webapp")
 		savedDash = insertTestDashboard(t, dashboardStore, "test dash 23", 1, savedFolder.ID, savedFolder.UID, false, "prod", "webapp")
 		insertTestDashboard(t, dashboardStore, "test dash 45", 1, savedFolder.ID, savedFolder.UID, false, "prod")
@@ -311,7 +311,7 @@ func TestIntegrationDashboardDataAccess(t *testing.T) {
 		dashs, err := dashboardStore.GetAllDashboardsByOrgId(context.Background(), 3)
 		require.NoError(t, err)
 		require.Equal(t, len(dashs), 2)
-		uids := []string{}
+		uids := make([]string, 0, len(dashs))
 		for _, d := range dashs {
 			uids = append(uids, d.UID)
 		}
@@ -637,9 +637,8 @@ func TestIntegrationDashboardDataAccess(t *testing.T) {
 }
 
 func TestIntegrationDashboardDataAccessGivenPluginWithImportedDashboards(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	sqlStore := db.InitTestDB(t)
 	dashboardStore, err := ProvideDashboardStore(sqlStore, &setting.Cfg{}, testFeatureToggles, tagimpl.ProvideService(sqlStore))
 	require.NoError(t, err)
@@ -661,9 +660,8 @@ func TestIntegrationDashboardDataAccessGivenPluginWithImportedDashboards(t *test
 }
 
 func TestIntegrationDashboard_SortingOptions(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	sqlStore := db.InitTestDB(t)
 	dashboardStore, err := ProvideDashboardStore(sqlStore, &setting.Cfg{}, testFeatureToggles, tagimpl.ProvideService(sqlStore))
 	require.NoError(t, err)
@@ -711,9 +709,8 @@ func TestIntegrationDashboard_SortingOptions(t *testing.T) {
 }
 
 func TestIntegrationDashboard_Filter(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	sqlStore := db.InitTestDB(t)
 	cfg := setting.NewCfg()
 	dashboardStore, err := ProvideDashboardStore(sqlStore, cfg, testFeatureToggles, tagimpl.ProvideService(sqlStore))
@@ -810,9 +807,7 @@ func insertTestFolder(t *testing.T, dashboardStore dashboards.Store, sqlStore db
 }
 
 func TestIntegrationFindDashboardsByTitle(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
 
 	sqlStore := db.InitTestDB(t)
 	cfg := setting.NewCfg()
@@ -928,9 +923,7 @@ func TestIntegrationFindDashboardsByTitle(t *testing.T) {
 }
 
 func TestIntegrationFindDashboardsByFolder(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
 
 	sqlStore, cfg := db.InitTestDBWithCfg(t)
 	features := featuremgmt.WithFeatures(featuremgmt.FlagPanelTitleSearch)
@@ -1059,9 +1052,7 @@ func TestIntegrationFindDashboardsByFolder(t *testing.T) {
 }
 
 func TestIntegrationGetDashboardsByLibraryPanelUID(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
 
 	sqlStore, cfg := db.InitTestDBWithCfg(t)
 	dashboardStore, err := ProvideDashboardStore(sqlStore, cfg, testFeatureToggles, tagimpl.ProvideService(sqlStore))
@@ -1301,7 +1292,7 @@ func testSearchDashboards(d dashboards.Store, query *dashboards.FindPersistedDas
 }
 
 func makeQueryResult(query *dashboards.FindPersistedDashboardsQuery, res []dashboards.DashboardSearchProjection) model.HitList {
-	hitList := make([]*model.Hit, 0)
+	hitList := make([]*model.Hit, 0, len(res))
 
 	for _, item := range res {
 		hitType := model.DashHitDB
@@ -1319,6 +1310,7 @@ func makeQueryResult(query *dashboards.FindPersistedDashboardsQuery, res []dashb
 			FolderUID:   item.FolderUID,
 			FolderTitle: item.FolderTitle,
 			Tags:        item.Tags,
+			Description: item.Description,
 		}
 
 		if item.FolderUID != "" {

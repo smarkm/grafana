@@ -5,20 +5,25 @@ import (
 	"encoding/json"
 	"fmt"
 
-	common "github.com/grafana/grafana/pkg/apimachinery/apis/common/v0alpha1"
-	"github.com/grafana/grafana/pkg/storage/unified/resourcepb"
-
 	"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v0alpha1"
+	common "github.com/grafana/grafana/pkg/apimachinery/apis/common/v0alpha1"
+	"github.com/grafana/grafana/pkg/apimachinery/utils"
 	"github.com/grafana/grafana/pkg/storage/unified/resource"
+	"github.com/grafana/grafana/pkg/storage/unified/resourcepb"
 )
 
 var (
-	excludedFields = map[string]string{
-		resource.SEARCH_FIELD_EXPLAIN: "",
-		resource.SEARCH_FIELD_SCORE:   "",
-		resource.SEARCH_FIELD_TITLE:   "",
-		resource.SEARCH_FIELD_FOLDER:  "",
-		resource.SEARCH_FIELD_TAGS:    "",
+	// These fields exist at the top-level of DashboardHit
+	standardFields = map[string]string{
+		resource.SEARCH_FIELD_EXPLAIN:          "",
+		resource.SEARCH_FIELD_SCORE:            "",
+		resource.SEARCH_FIELD_TITLE:            "",
+		resource.SEARCH_FIELD_FOLDER:           "",
+		resource.SEARCH_FIELD_TAGS:             "",
+		resource.SEARCH_FIELD_DESCRIPTION:      "",
+		resource.SEARCH_FIELD_MANAGER_ID:       "",
+		resource.SEARCH_FIELD_MANAGER_KIND:     "",
+		resource.SEARCH_FIELD_OWNER_REFERENCES: "",
 	}
 
 	IncludeFields = []string{
@@ -26,6 +31,7 @@ var (
 		resource.SEARCH_FIELD_TAGS,
 		resource.SEARCH_FIELD_LABELS,
 		resource.SEARCH_FIELD_FOLDER,
+		resource.SEARCH_FIELD_DESCRIPTION,
 		resource.SEARCH_FIELD_CREATED,
 		resource.SEARCH_FIELD_CREATED_BY,
 		resource.SEARCH_FIELD_UPDATED,
@@ -35,9 +41,14 @@ var (
 		resource.SEARCH_FIELD_SOURCE_PATH,
 		resource.SEARCH_FIELD_SOURCE_CHECKSUM,
 		resource.SEARCH_FIELD_SOURCE_TIME,
+		resource.SEARCH_FIELD_OWNER_REFERENCES,
+		// below is needed to determine whether a provisioned dashboard exists or not
+		resource.SEARCH_FIELD_LEGACY_ID,
+		resource.SEARCH_FIELD_LABELS + "." + resource.SEARCH_FIELD_LEGACY_ID,
 	}
 )
 
+// nolint:gocyclo
 func ParseResults(result *resourcepb.ResourceSearchResponse, offset int64) (v0alpha1.SearchResults, error) {
 	if result == nil {
 		return v0alpha1.SearchResults{}, nil
@@ -50,8 +61,12 @@ func ParseResults(result *resourcepb.ResourceSearchResponse, offset int64) (v0al
 	titleIDX := -1
 	folderIDX := -1
 	tagsIDX := -1
+	descriptionIDX := -1
 	scoreIDX := -1
 	explainIDX := -1
+	managerKindIDX := -1
+	managerIdIDX := -1
+	ownerRefsIDX := -1
 
 	for i, v := range result.Results.Columns {
 		switch v.Name {
@@ -65,6 +80,14 @@ func ParseResults(result *resourcepb.ResourceSearchResponse, offset int64) (v0al
 			folderIDX = i
 		case resource.SEARCH_FIELD_TAGS:
 			tagsIDX = i
+		case resource.SEARCH_FIELD_MANAGER_ID:
+			managerIdIDX = i
+		case resource.SEARCH_FIELD_MANAGER_KIND:
+			managerKindIDX = i
+		case resource.SEARCH_FIELD_DESCRIPTION:
+			descriptionIDX = i
+		case resource.SEARCH_FIELD_OWNER_REFERENCES:
+			ownerRefsIDX = i
 		}
 	}
 
@@ -83,9 +106,10 @@ func ParseResults(result *resourcepb.ResourceSearchResponse, offset int64) (v0al
 			return v0alpha1.SearchResults{}, fmt.Errorf("error parsing Search Response: mismatch number of columns and cells")
 		}
 
+		// Dynamically defined fields
 		fields := &common.Unstructured{}
 		for colIndex, col := range result.Results.Columns {
-			if _, ok := excludedFields[col.Name]; !ok {
+			if _, ok := standardFields[col.Name]; !ok {
 				val, err := resource.DecodeCell(col, colIndex, row.Cells[colIndex])
 				if err != nil {
 					return v0alpha1.SearchResults{}, err
@@ -113,6 +137,15 @@ func ParseResults(result *resourcepb.ResourceSearchResponse, offset int64) (v0al
 		if folderIDX >= 0 && row.Cells[folderIDX] != nil {
 			hit.Folder = string(row.Cells[folderIDX])
 		}
+		if descriptionIDX >= 0 && row.Cells[descriptionIDX] != nil {
+			hit.Description = string(row.Cells[descriptionIDX])
+		}
+		if managerIdIDX >= 0 && row.Cells[managerIdIDX] != nil {
+			hit.ManagedBy.ID = string(row.Cells[managerIdIDX])
+		}
+		if managerKindIDX >= 0 && row.Cells[managerKindIDX] != nil {
+			hit.ManagedBy.Kind = utils.ManagerKind(row.Cells[managerKindIDX])
+		}
 		if tagsIDX >= 0 && row.Cells[tagsIDX] != nil {
 			_ = json.Unmarshal(row.Cells[tagsIDX], &hit.Tags)
 		}
@@ -121,6 +154,9 @@ func ParseResults(result *resourcepb.ResourceSearchResponse, offset int64) (v0al
 		}
 		if scoreIDX >= 0 && row.Cells[scoreIDX] != nil {
 			_, _ = binary.Decode(row.Cells[scoreIDX], binary.BigEndian, &hit.Score)
+		}
+		if ownerRefsIDX >= 0 && row.Cells[ownerRefsIDX] != nil {
+			_ = json.Unmarshal(row.Cells[ownerRefsIDX], &hit.OwnerReferences)
 		}
 
 		sr.Hits[i] = *hit

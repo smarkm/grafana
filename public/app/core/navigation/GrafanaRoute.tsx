@@ -1,8 +1,9 @@
 import { Suspense, useEffect, useLayoutEffect } from 'react';
-import { Navigate, useLocation } from 'react-router-dom-v5-compat';
+import { Navigate, useLocation, useParams } from 'react-router-dom-v5-compat';
 
 import { config, locationSearchToObject, navigationLogger, reportPageview } from '@grafana/runtime';
 import { ErrorBoundary } from '@grafana/ui';
+import { isFrontendService } from 'app/core/utils/isFrontendService';
 
 import { useGrafana } from '../context/GrafanaContext';
 import { contextSrv } from '../services/context_srv';
@@ -44,7 +45,7 @@ export function GrafanaRoute(props: Props) {
   navigationLogger('GrafanaRoute', false, 'Rendered', props.route);
 
   return (
-    <ErrorBoundary dependencies={[props.route]}>
+    <ErrorBoundary boundaryName="grafana-route" dependencies={[props.route]}>
       {({ error, errorInfo }) => {
         if (error) {
           return <GrafanaRouteError error={error} errorInfo={errorInfo} />;
@@ -62,10 +63,14 @@ export function GrafanaRoute(props: Props) {
 
 export function GrafanaRouteWrapper({ route }: Pick<Props, 'route'>) {
   const location = useLocation();
+  const params = useParams();
+
+  const allowAnonymous =
+    typeof route.allowAnonymous === 'function' ? route.allowAnonymous(params) : route.allowAnonymous;
 
   // Perform login check in the frontend now
-  if (config.featureToggles.multiTenantFrontend) {
-    const routeRequiresSignin = !route.allowAnonymous && !config.anonymousEnabled;
+  if (isFrontendService()) {
+    const routeRequiresSignin = !allowAnonymous && !config.anonymousEnabled;
     if (routeRequiresSignin && !contextSrv.isSignedIn) {
       contextSrv.setRedirectToUrl();
 

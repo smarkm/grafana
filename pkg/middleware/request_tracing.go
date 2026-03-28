@@ -45,12 +45,15 @@ var unnamedHandlers = []struct {
 	pathPattern *regexp.Regexp
 	handler     string
 }{
+	{handler: "plugin-assets", pathPattern: regexp.MustCompile("^/public/plugins/")},
+	{handler: "public-build-assets", pathPattern: regexp.MustCompile("^/public/build/")}, // All Grafana core assets should come from this path
 	{handler: "public-assets", pathPattern: regexp.MustCompile("^/favicon.ico")},
-	{handler: "public-assets", pathPattern: regexp.MustCompile("^/public/")},
+	{handler: "public-assets", pathPattern: regexp.MustCompile("^/public/")}, // Fallback for other assets, this should go down to 0
 	{handler: "/metrics", pathPattern: regexp.MustCompile("^/metrics")},
 	{handler: "/healthz", pathPattern: regexp.MustCompile("^/healthz")},
 	{handler: "/api/health", pathPattern: regexp.MustCompile("^/api/health")},
 	{handler: "/robots.txt", pathPattern: regexp.MustCompile("^/robots.txt$")},
+	{handler: "/", pathPattern: regexp.MustCompile("^/$")},
 	// bundle all pprof endpoints under the same handler name
 	{handler: "/debug/pprof-handlers", pathPattern: regexp.MustCompile("^/debug/pprof")},
 }
@@ -71,16 +74,20 @@ func RouteOperationName(req *http.Request) (string, bool) {
 	return "", false
 }
 
-// Paths that don't need tracing spans applied to them because of the
-// little value that would provide us
-func SkipTracingPaths(req *http.Request) bool {
-	return strings.HasPrefix(req.URL.Path, "/public/") ||
+func ShouldTraceWithExceptions(req *http.Request) bool {
+	// Paths that don't need tracing spans applied to them because of the
+	// little value that would provide us
+	if strings.HasPrefix(req.URL.Path, "/public/") ||
 		req.URL.Path == "/robots.txt" ||
 		req.URL.Path == "/favicon.ico" ||
-		req.URL.Path == "/api/health"
+		req.URL.Path == "/api/health" {
+		return false
+	}
+
+	return true
 }
 
-func TraceAllPaths(req *http.Request) bool {
+func ShouldTraceAllPaths(req *http.Request) bool {
 	return true
 }
 

@@ -66,7 +66,12 @@ export class ShareLinkTab extends SceneObjectBase<ShareLinkTabState> implements 
     let shareUrl = createDashboardShareUrl(dashboard, opts, panel);
 
     if (useShortUrl) {
-      shareUrl = await createShortLink(shareUrl);
+      try {
+        shareUrl = await createShortLink(shareUrl);
+      } catch {
+        this.setState({ isBuildUrlLoading: false });
+        return;
+      }
     }
 
     const timeRange = sceneGraph.getTimeRange(panel ?? dashboard);
@@ -78,8 +83,11 @@ export class ShareLinkTab extends SceneObjectBase<ShareLinkTabState> implements 
       delete imageQueryParams.viewPanel;
       imageQueryParams.panelId = panel.getPathId();
       // force solo route to use scenes
-      imageQueryParams['__feature.dashboardSceneSolo'] = true;
+      imageQueryParams['__feature.dashboardScene'] = true;
     }
+
+    // hide Grafana logo in the rendered image
+    urlParamsUpdate.hideLogo = 'true';
 
     const imageUrl = getDashboardUrl({
       uid: dashboard.state.uid,

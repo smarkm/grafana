@@ -3,7 +3,6 @@ import { useEffect } from 'react';
 
 import { GrafanaTheme2 } from '@grafana/data';
 import { t, Trans } from '@grafana/i18n';
-import { config } from '@grafana/runtime';
 import { ErrorBoundaryAlert, LoadingPlaceholder, useStyles2, useTheme2 } from '@grafana/ui';
 import { SplitPaneWrapper } from 'app/core/components/SplitPaneWrapper/SplitPaneWrapper';
 import { useGrafana } from 'app/core/context/GrafanaContext';
@@ -18,6 +17,7 @@ import { ExploreDrawer } from './ExploreDrawer';
 import { ExplorePaneContainer } from './ExplorePaneContainer';
 import { useQueriesDrawerContext } from './QueriesDrawer/QueriesDrawerContext';
 import RichHistoryContainer from './RichHistory/RichHistoryContainer';
+import { useExplorePageContext } from './hooks/useExplorePageContext';
 import { useExplorePageTitle } from './hooks/useExplorePageTitle';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useSplitSizeUpdater } from './hooks/useSplitSizeUpdater';
@@ -50,7 +50,7 @@ function ExplorePageContent(props: GrafanaRouteComponentProps<{}, ExploreQueryPa
   const hasSplit = useSelector(isSplit);
   const correlationDetails = useSelector(selectCorrelationDetails);
   const { drawerOpened, setDrawerOpened } = useQueriesDrawerContext();
-  const showCorrelationEditorBar = config.featureToggles.correlations && (correlationDetails?.editorMode || false);
+  const showCorrelationEditorBar = correlationDetails?.editorMode || false;
 
   useEffect(() => {
     //This is needed for breadcrumbs and topnav.
@@ -61,6 +61,7 @@ function ExplorePageContent(props: GrafanaRouteComponentProps<{}, ExploreQueryPa
   }, [chrome, navModel]);
 
   useKeyboardShortcuts();
+  useExplorePageContext(panes);
 
   return (
     <div
@@ -69,7 +70,7 @@ function ExplorePageContent(props: GrafanaRouteComponentProps<{}, ExploreQueryPa
       })}
     >
       <h1 className="sr-only">
-        <Trans i18nKey="nav.explore.title" />
+        <Trans i18nKey="nav.explore.title">Explore</Trans>
       </h1>
       <ExploreActions />
       {showCorrelationEditorBar && <CorrelationEditorModeBar panes={panes} />}
@@ -86,7 +87,7 @@ function ExplorePageContent(props: GrafanaRouteComponentProps<{}, ExploreQueryPa
       >
         {panes.map(([exploreId, pane]) => {
           return (
-            <ErrorBoundaryAlert key={exploreId} style="page">
+            <ErrorBoundaryAlert boundaryName="explore-pane" key={exploreId} style="page">
               {pane.initialized ? (
                 <ExplorePaneContainer exploreId={exploreId} />
               ) : (

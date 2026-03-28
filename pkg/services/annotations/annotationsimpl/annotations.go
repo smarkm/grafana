@@ -40,7 +40,7 @@ func ProvideService(
 	l := log.New("annotations")
 	l.Debug("Initializing annotations service")
 
-	xormStore := NewXormStore(cfg, log.New("annotations.sql"), db, tagService)
+	xormStore := NewXormStore(cfg, log.New("annotations.sql"), db, tagService, reg)
 	write := xormStore
 
 	var read readStore
@@ -56,7 +56,7 @@ func ProvideService(
 	return &RepositoryImpl{
 		db:       db,
 		features: features,
-		authZ:    accesscontrol.NewAuthService(db, features, dashSvc),
+		authZ:    accesscontrol.NewAuthService(db, features, dashSvc, cfg),
 		reader:   read,
 		writer:   write,
 	}
@@ -98,6 +98,7 @@ func (r *RepositoryImpl) Find(ctx context.Context, query *annotations.ItemQuery)
 	}
 
 	results := make([]*annotations.ItemDTO, 0, query.Limit)
+	// Page paginates dashboards (used in Authorize → SearchDashboards), not annotation rows (store uses Limit/Offset).
 	query.Page = 1
 
 	// Iterate over available annotations until query limit is reached
@@ -114,7 +115,7 @@ func (r *RepositoryImpl) Find(ctx context.Context, query *annotations.ItemQuery)
 		}
 
 		results = append(results, res...)
-		query.Page++
+		query.Page++ // next iteration fetches the next page of dashboards
 		// All user's dashboards are fetched
 		if len(resources.Dashboards) < int(query.Limit) {
 			break

@@ -58,6 +58,7 @@ func (f *AlertmanagerApiHandler) getService(ctx *contextmodel.ReqContext) (*Lote
 // Extra configs are the alertmanager configurations that were saved using the Prometheus conversion API.
 func (f *AlertmanagerApiHandler) isExtraConfig(ctx *contextmodel.ReqContext) bool {
 	// Only enabled if feature flag is on
+	//nolint:staticcheck // not yet migrated to OpenFeature
 	if !f.FeatureManager.IsEnabledGlobally(featuremgmt.FlagAlertingImportAlertmanagerUI) {
 		return false
 	}
@@ -206,8 +207,10 @@ func (f *AlertmanagerApiHandler) handleRoutePostAlertingConfig(ctx *contextmodel
 	if err != nil {
 		return errorToResponse(err)
 	}
-	if !body.AlertmanagerConfig.ReceiverType().Can(apimodels.AlertmanagerReceiverType) {
-		return errorToResponse(backendTypeDoesNotMatchPayloadTypeError(apimodels.AlertmanagerBackend, body.AlertmanagerConfig.ReceiverType().String()))
+	for _, p := range body.AlertmanagerConfig.Receivers {
+		if p.HasGrafanaIntegrations() {
+			return errorToResponse(backendTypeDoesNotMatchPayloadTypeError(apimodels.AlertmanagerBackend, apimodels.GrafanaBackend.String()))
+		}
 	}
 	return s.RoutePostAlertingConfig(ctx, body)
 }
@@ -227,10 +230,6 @@ func (f *AlertmanagerApiHandler) handleRoutePostAMAlerts(ctx *contextmodel.ReqCo
 
 func (f *AlertmanagerApiHandler) handleRouteDeleteGrafanaSilence(ctx *contextmodel.ReqContext, id string) response.Response {
 	return f.GrafanaSvc.RouteDeleteSilence(ctx, id)
-}
-
-func (f *AlertmanagerApiHandler) handleRouteDeleteGrafanaAlertingConfig(ctx *contextmodel.ReqContext) response.Response {
-	return f.GrafanaSvc.RouteDeleteAlertingConfig(ctx)
 }
 
 func (f *AlertmanagerApiHandler) handleRouteCreateGrafanaSilence(ctx *contextmodel.ReqContext, body apimodels.PostableSilence) response.Response {

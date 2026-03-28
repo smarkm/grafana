@@ -684,7 +684,7 @@ func RunTestClusterScopedWatch(ctx context.Context, t *testing.T, store storage.
 			currentObjs := map[string]*example.Pod{}
 			for _, watchTest := range tt.watchTests {
 				out := &example.Pod{}
-				key := "pods/" + watchTest.obj.Name
+				key := "pods/ns-1/" + watchTest.obj.Name
 				err := store.GuaranteedUpdate(ctx, key, out, true, nil, storage.SimpleUpdate(
 					func(runtime.Object) (runtime.Object, error) {
 						obj := watchTest.obj.DeepCopy()
@@ -1220,7 +1220,7 @@ func RunSendInitialEventsBackwardCompatibility(ctx context.Context, t *testing.T
 func RunWatchSemantics(ctx context.Context, t *testing.T, store storage.Interface) {
 	trueVal, falseVal := true, false
 	addEventsFromCreatedPods := func(createdInitialPods []*example.Pod) []watch.Event {
-		var ret []watch.Event
+		ret := make([]watch.Event, 0, len(createdInitialPods))
 		for _, createdPod := range createdInitialPods {
 			ret = append(ret, watch.Event{Type: watch.Added, Object: createdPod})
 		}
@@ -1607,15 +1607,15 @@ func clusterScopedNodeNameAttrFunc(obj runtime.Object) (labels.Set, fields.Set, 
 }
 
 func basePod(podName string) *example.Pod {
-	return baseNamespacedPod(podName, "")
+	return baseNamespacedPod(podName, "ns-1")
 }
 
 func basePodUpdated(podName string) *example.Pod {
-	return baseNamespacedPodUpdated(podName, "")
+	return baseNamespacedPodUpdated(podName, "ns-1")
 }
 
 func basePodAssigned(podName, nodeName string) *example.Pod {
-	return baseNamespacedPodAssigned(podName, "", nodeName)
+	return baseNamespacedPodAssigned(podName, "ns-1", nodeName)
 }
 
 func baseNamespacedPod(podName, namespace string) *example.Pod {

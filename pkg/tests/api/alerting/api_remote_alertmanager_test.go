@@ -13,14 +13,14 @@ import (
 	apimodels "github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
 	"github.com/grafana/grafana/pkg/tests/alertmanager"
 	"github.com/grafana/grafana/pkg/tests/testinfra"
+	"github.com/grafana/grafana/pkg/util/testutil"
 )
 
 // TestIntegrationRemoteAlertmanagerConfigUpload tests that when we post an alertmanager
 // configuration to Grafana with remote alertmanager enabled, it gets uploaded to the remote Mimir.
 func TestIntegrationRemoteAlertmanagerConfigUpload(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	s, err := alertmanager.NewAlertmanagerScenario()
@@ -62,10 +62,10 @@ func TestIntegrationRemoteAlertmanagerConfigUpload(t *testing.T) {
 	require.NotNil(t, initialMimirConfig) // Grafana automatically syncs default config to remote alertmanager
 	require.NotNil(t, initialMimirConfig.GrafanaAlertmanagerConfig)
 
-	// Initially there is just the default grafana-default-email receiver
+	// Initially there is just the default empty receiver
 	receivers := initialMimirConfig.GrafanaAlertmanagerConfig.AlertmanagerConfig.Receivers
 	require.Len(t, receivers, 1)
-	require.Equal(t, "grafana-default-email", receivers[0].Name)
+	require.Equal(t, "empty", receivers[0].Name)
 
 	// Now upload a new extra config and check that it gets uploaded to Mimir
 	testAlertmanagerConfigYAML := `
@@ -116,11 +116,9 @@ receivers:
 	var foundDefault, foundExtraSlack bool
 	for _, receiver := range receivers {
 		switch receiver.Name {
-		case "grafana-default-email":
+		case "empty":
 			foundDefault = true
-			require.Len(t, receiver.GrafanaManagedReceivers, 1)
-			require.Equal(t, "email receiver", receiver.GrafanaManagedReceivers[0].Name)
-			require.Equal(t, "email", receiver.GrafanaManagedReceivers[0].Type)
+			require.Len(t, receiver.GrafanaManagedReceivers, 0)
 		case "extra-slack":
 			foundExtraSlack = true
 			require.Len(t, receiver.SlackConfigs, 1)
@@ -136,9 +134,8 @@ receivers:
 // a historical alertmanager configuration with extra configs, it gets properly decrypted
 // and uploaded to the remote Mimir.
 func TestIntegrationRemoteAlertmanagerHistoricalConfigActivation(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	s, err := alertmanager.NewAlertmanagerScenario()

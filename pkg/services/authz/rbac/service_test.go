@@ -3,10 +3,11 @@ package rbac
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
-	"github.com/go-jose/go-jose/v3/jwt"
+	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/singleflight"
@@ -16,7 +17,7 @@ import (
 	authzv1 "github.com/grafana/authlib/authz/proto/v1"
 	"github.com/grafana/authlib/cache"
 	"github.com/grafana/authlib/types"
-
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/apimachinery/utils"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/infra/tracing"
@@ -30,7 +31,7 @@ func TestService_checkPermission(t *testing.T) {
 	type testCase struct {
 		name        string
 		permissions []accesscontrol.Permission
-		check       CheckRequest
+		check       checkRequest
 		folders     []store.Folder
 		expected    bool
 	}
@@ -47,7 +48,7 @@ func TestService_checkPermission(t *testing.T) {
 					Identifier: "some_dashboard",
 				},
 			},
-			check: CheckRequest{
+			check: checkRequest{
 				Action:   "dashboards:read",
 				Group:    "dashboard.grafana.app",
 				Resource: "dashboards",
@@ -66,7 +67,7 @@ func TestService_checkPermission(t *testing.T) {
 					Identifier: "another_dashboard",
 				},
 			},
-			check: CheckRequest{
+			check: checkRequest{
 				Action:   "dashboards:read",
 				Group:    "dashboard.grafana.app",
 				Resource: "dashboards",
@@ -85,7 +86,7 @@ func TestService_checkPermission(t *testing.T) {
 					Identifier: "*",
 				},
 			},
-			check: CheckRequest{
+			check: checkRequest{
 				Action:   "dashboards:read",
 				Group:    "dashboard.grafana.app",
 				Resource: "dashboards",
@@ -103,7 +104,7 @@ func TestService_checkPermission(t *testing.T) {
 					Attribute: "*",
 				},
 			},
-			check: CheckRequest{
+			check: checkRequest{
 				Action:   "dashboards:read",
 				Group:    "dashboard.grafana.app",
 				Resource: "dashboards",
@@ -120,7 +121,7 @@ func TestService_checkPermission(t *testing.T) {
 					Kind:   "*",
 				},
 			},
-			check: CheckRequest{
+			check: checkRequest{
 				Action:   "dashboards:read",
 				Group:    "dashboard.grafana.app",
 				Resource: "dashboards",
@@ -139,7 +140,7 @@ func TestService_checkPermission(t *testing.T) {
 					Identifier: "general",
 				},
 			},
-			check: CheckRequest{
+			check: checkRequest{
 				Action:   "dashboards:create",
 				Group:    "dashboard.grafana.app",
 				Resource: "dashboards",
@@ -154,7 +155,7 @@ func TestService_checkPermission(t *testing.T) {
 					Action: "dashboards:create",
 				},
 			},
-			check: CheckRequest{
+			check: checkRequest{
 				Action:   "dashboards:create",
 				Group:    "dashboard.grafana.app",
 				Resource: "dashboards",
@@ -165,7 +166,7 @@ func TestService_checkPermission(t *testing.T) {
 		{
 			name:        "should return false if user has no permissions on resource",
 			permissions: []accesscontrol.Permission{},
-			check: CheckRequest{
+			check: checkRequest{
 				Action:   "dashboards:read",
 				Group:    "dashboard.grafana.app",
 				Resource: "dashboards",
@@ -187,7 +188,7 @@ func TestService_checkPermission(t *testing.T) {
 				{UID: "parent"},
 				{UID: "child", ParentUID: strPtr("parent")},
 			},
-			check: CheckRequest{
+			check: checkRequest{
 				Action:       "dashboards:read",
 				Group:        "dashboard.grafana.app",
 				Resource:     "dashboards",
@@ -208,7 +209,7 @@ func TestService_checkPermission(t *testing.T) {
 				},
 			},
 			folders: []store.Folder{{UID: "parent"}},
-			check: CheckRequest{
+			check: checkRequest{
 				Action:       "dashboards:create",
 				Group:        "dashboard.grafana.app",
 				Resource:     "dashboards",
@@ -229,8 +230,8 @@ func TestService_checkPermission(t *testing.T) {
 					Identifier: "parent",
 				},
 			},
-			folders: []store.Folder{{UID: "parent"}},
-			check: CheckRequest{
+			folders: []store.Folder{{UID: "parent"}, {UID: "other_parent"}},
+			check: checkRequest{
 				Action:       "dashboards:create",
 				Group:        "dashboard.grafana.app",
 				Resource:     "dashboards",
@@ -252,7 +253,7 @@ func TestService_checkPermission(t *testing.T) {
 				},
 			},
 			folders: []store.Folder{{UID: "parent"}},
-			check: CheckRequest{
+			check: checkRequest{
 				Action:       "dashboards:read",
 				Group:        "dashboard.grafana.app",
 				Resource:     "dashboards",
@@ -263,21 +264,54 @@ func TestService_checkPermission(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "should return true for datasources if service has permission",
+			name: "should allow querying a datasource",
 			permissions: []accesscontrol.Permission{
 				{
 					Action:     "datasources:query",
-					Scope:      "datasources:uid:some_datasource",
+					Scope:      "datasources:uid:ds1",
 					Kind:       "datasources",
 					Attribute:  "uid",
-					Identifier: "some_datasource",
+					Identifier: "ds1",
 				},
 			},
-			check: CheckRequest{
+			check: checkRequest{
 				Action:   "datasources:query",
 				Group:    "query.grafana.app",
 				Resource: "query",
-				Name:     "some_datasource",
+				Name:     "ds1",
+				Verb:     utils.VerbCreate,
+			},
+			expected: true,
+		},
+		{
+			name: "should deny querying a datasource without correct permission",
+			permissions: []accesscontrol.Permission{
+				{
+					Action:     "datasources:query",
+					Scope:      "datasources:uid:ds2",
+					Kind:       "datasources",
+					Attribute:  "uid",
+					Identifier: "ds2",
+				},
+			},
+			check: checkRequest{
+				Action:   "datasources:query",
+				Group:    "query.grafana.app",
+				Resource: "query",
+				Name:     "ds1",
+				Verb:     utils.VerbCreate,
+			},
+			expected: false,
+		},
+		{
+			name: "should allow creating a team (no scope needed)",
+			permissions: []accesscontrol.Permission{
+				{Action: "teams:create"},
+			},
+			check: checkRequest{
+				Action:   "teams:create",
+				Group:    "iam.grafana.app",
+				Resource: "teams",
 				Verb:     utils.VerbCreate,
 			},
 			expected: true,
@@ -290,11 +324,157 @@ func TestService_checkPermission(t *testing.T) {
 
 			s.folderCache.Set(context.Background(), folderCacheKey("default"), newFolderTree(tc.folders))
 			tc.check.Namespace = types.NamespaceInfo{Value: "default", OrgID: 1}
-			got, err := s.checkPermission(context.Background(), getScopeMap(tc.permissions), &tc.check)
+			ns := types.NamespaceInfo{Value: "default", OrgID: 1}
+			got, err := s.checkPermission(context.Background(), s.getScopeMap(tc.permissions), &tc.check, s.newFolderTreeGetter(context.Background(), ns, false))
 			require.NoError(t, err)
 			assert.Equal(t, tc.expected, got)
 		})
 	}
+}
+
+func TestService_mapping(t *testing.T) {
+	type testCase struct {
+		name   string
+		input  *authzv1.CheckRequest
+		output *checkRequest
+		err    string
+	}
+
+	ns := "default"
+	testUserA := &identity.StaticRequester{
+		Type:           types.TypeUser,
+		Login:          "test",
+		UserID:         123,
+		UserUID:        "u123",
+		OrgRole:        identity.RoleAdmin,
+		IsGrafanaAdmin: true, // can do anything
+		Namespace:      ns,
+		OrgID:          1,
+	}
+	ctx := types.WithAuthInfo(request.WithNamespace(context.Background(), ns), testUserA)
+
+	testCases := []testCase{
+		{
+			name: "should return true if user has permission",
+			input: &authzv1.CheckRequest{
+				Group:    "folder.grafana.app",
+				Resource: "folders",
+				Name:     "aaa",
+				Verb:     utils.VerbCreate,
+				Folder:   "folder",
+			},
+			output: &checkRequest{
+				Action:       "folders:create",
+				ActionSets:   []string{"folders:edit", "folders:admin"},
+				Group:        "folder.grafana.app",
+				Resource:     "folders",
+				Name:         "aaa",
+				Verb:         "create",
+				ParentFolder: "folder",
+				Namespace: types.NamespaceInfo{
+					Value: ns,
+					OrgID: 1,
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := setupService()
+			tc.input.Namespace = ns
+			tc.input.Subject = testUserA.GetUID() // the subject string
+
+			got, err := s.validateCheckRequest(ctx, tc.input)
+			if tc.err != "" {
+				require.Error(t, err)
+				require.ErrorContains(t, err, tc.err)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, got)
+
+			tc.output.IdentityType = types.TypeUser
+			tc.output.UserUID = testUserA.GetIdentifier()
+
+			require.Equal(t, tc.output, got)
+		})
+	}
+}
+
+func TestService_checkPermission_folderCacheMissRecovery(t *testing.T) {
+	s := setupService()
+	ctx := context.Background()
+
+	// User has root folder access
+	userPermissions := map[string]bool{
+		"folders:uid:root": true,
+	}
+
+	// Populate store with folders
+	folderStore := &fakeStore{
+		folders:        []store.Folder{{UID: "root"}, {UID: "sub", ParentUID: strPtr("root")}},
+		disableNsCheck: true,
+	}
+	s.folderStore = folderStore
+
+	// Sub folder is missing from the cache
+	s.folderCache.Set(ctx, folderCacheKey("default"), newFolderTree([]store.Folder{{UID: "root"}}))
+
+	// Perform check on sub folder
+	check := checkRequest{
+		Action:       "dashboards:read",
+		Group:        "dashboard.grafana.app",
+		Resource:     "dashboards",
+		Name:         "dash1",
+		ParentFolder: "sub",
+		Namespace:    types.NamespaceInfo{Value: "default", OrgID: 1},
+	}
+
+	ns := types.NamespaceInfo{Value: "default", OrgID: 1}
+	got, err := s.checkPermission(ctx, userPermissions, &check, s.newFolderTreeGetter(ctx, ns, false))
+	require.NoError(t, err)
+	assert.True(t, got)
+
+	// Check that folder store was queried despite the initial cache hit
+	assert.Equal(t, 1, folderStore.calls)
+}
+
+func TestService_listPermission_skipCache(t *testing.T) {
+	s := setupService()
+	ctx := context.Background()
+
+	// User has root folder access
+	userPermissions := map[string]bool{
+		"folders:uid:root": true,
+	}
+
+	// Populate store with folders
+	folderStore := &fakeStore{
+		folders:        []store.Folder{{UID: "root"}, {UID: "sub", ParentUID: strPtr("root")}},
+		disableNsCheck: true,
+	}
+	s.folderStore = folderStore
+
+	// Sub folder is missing from the cache
+	s.folderCache.Set(ctx, folderCacheKey("default"), newFolderTree([]store.Folder{{UID: "root"}}))
+
+	// Perform list
+	listReq := listRequest{
+		Action:    "folders:read",
+		Group:     "folder.grafana.app",
+		Resource:  "folders",
+		Namespace: types.NamespaceInfo{Value: "default", OrgID: 1},
+		Options:   &ListRequestOptions{SkipCache: true},
+	}
+
+	res, err := s.listPermission(ctx, userPermissions, &listReq)
+	require.NoError(t, err)
+	// Check that all folders are in returned list
+	assert.Len(t, res.GetItems(), 2)
+
+	// Check that folder store was queried
+	assert.Equal(t, 1, folderStore.calls)
 }
 
 func TestService_getUserTeams(t *testing.T) {
@@ -442,6 +622,7 @@ func TestService_getUserPermissions(t *testing.T) {
 	type testCase struct {
 		name          string
 		permissions   []accesscontrol.Permission
+		action        string
 		cacheHit      bool
 		expectedPerms map[string]bool
 	}
@@ -452,12 +633,14 @@ func TestService_getUserPermissions(t *testing.T) {
 			permissions: []accesscontrol.Permission{
 				{Action: "dashboards:read", Scope: "dashboards:uid:some_dashboard"},
 			},
+			action:        "dashboards:read",
 			cacheHit:      false,
 			expectedPerms: map[string]bool{"dashboards:uid:some_dashboard": true},
 		},
 		{
 			name:          "should return error if store fails",
 			permissions:   nil,
+			action:        "dashboards:read",
 			cacheHit:      false,
 			expectedPerms: map[string]bool{},
 		},
@@ -466,6 +649,7 @@ func TestService_getUserPermissions(t *testing.T) {
 			permissions: []accesscontrol.Permission{
 				{Action: "teams:read", Scope: "teams:id:1"},
 			},
+			action:        "teams:read",
 			cacheHit:      false,
 			expectedPerms: map[string]bool{"teams:uid:t1": true},
 		},
@@ -478,10 +662,9 @@ func TestService_getUserPermissions(t *testing.T) {
 			ns := types.NamespaceInfo{Value: "stacks-12", OrgID: 1, StackID: 12}
 
 			userID := &store.UserIdentifiers{UID: "test-uid", ID: 112}
-			action := "dashboards:read"
 
 			if tc.cacheHit {
-				s.permCache.Set(ctx, userPermCacheKey(ns.Value, userID.UID, action), tc.expectedPerms)
+				s.permCache.Set(ctx, userPermCacheKey(ns.Value, userID.UID, tc.action), tc.expectedPerms)
 			}
 
 			store := &fakeStore{
@@ -501,7 +684,7 @@ func TestService_getUserPermissions(t *testing.T) {
 				disableNsCheck: true,
 			}
 
-			perms, err := s.getIdentityPermissions(ctx, ns, types.TypeUser, userID.UID, action)
+			perms, err := s.getIdentityPermissions(ctx, ns, types.TypeUser, userID.UID, tc.action, nil)
 			require.NoError(t, err)
 			require.Len(t, perms, len(tc.expectedPerms))
 			for scope := range perms {
@@ -522,7 +705,7 @@ func TestService_listPermission(t *testing.T) {
 		name            string
 		permissions     []accesscontrol.Permission
 		folders         []store.Folder
-		list            ListRequest
+		list            listRequest
 		expectedItems   []string
 		expectedFolders []string
 		expectedAll     bool
@@ -538,10 +721,11 @@ func TestService_listPermission(t *testing.T) {
 					Kind:   "*",
 				},
 			},
-			list: ListRequest{
+			list: listRequest{
 				Action:   "dashboards:read",
 				Group:    "dashboard.grafana.app",
 				Resource: "dashboards",
+				Options:  &ListRequestOptions{},
 			},
 			expectedAll: true,
 		},
@@ -574,10 +758,11 @@ func TestService_listPermission(t *testing.T) {
 				{UID: "some_folder_1"},
 				{UID: "some_folder_2"},
 			},
-			list: ListRequest{
+			list: listRequest{
 				Action:   "dashboards:read",
 				Group:    "dashboard.grafana.app",
 				Resource: "dashboards",
+				Options:  &ListRequestOptions{},
 			},
 			expectedItems:   []string{"some_dashboard"},
 			expectedFolders: []string{"some_folder_1", "some_folder_2"},
@@ -601,10 +786,11 @@ func TestService_listPermission(t *testing.T) {
 				{UID: "some_folder_subsubchild", ParentUID: strPtr("some_folder_subchild2")},
 				{UID: "some_folder_1", ParentUID: strPtr("some_other_folder")},
 			},
-			list: ListRequest{
+			list: listRequest{
 				Action:   "dashboards:read",
 				Group:    "dashboard.grafana.app",
 				Resource: "dashboards",
+				Options:  &ListRequestOptions{},
 			},
 			expectedFolders: []string{"some_folder_parent", "some_folder_child", "some_folder_subchild1", "some_folder_subchild2", "some_folder_subsubchild"},
 		},
@@ -630,10 +816,11 @@ func TestService_listPermission(t *testing.T) {
 				{UID: "some_folder_parent"},
 				{UID: "some_folder_child", ParentUID: strPtr("some_folder_parent")},
 			},
-			list: ListRequest{
+			list: listRequest{
 				Action:   "dashboards:read",
 				Group:    "dashboard.grafana.app",
 				Resource: "dashboards",
+				Options:  &ListRequestOptions{},
 			},
 			expectedItems:   []string{"some_dashboard"},
 			expectedFolders: []string{"some_folder_parent", "some_folder_child"},
@@ -662,10 +849,11 @@ func TestService_listPermission(t *testing.T) {
 				{UID: "some_folder_subchild", ParentUID: strPtr("some_folder_child")},
 				{UID: "some_folder_child2", ParentUID: strPtr("some_folder_parent")},
 			},
-			list: ListRequest{
+			list: listRequest{
 				Action:   "dashboards:read",
 				Group:    "dashboard.grafana.app",
 				Resource: "dashboards",
+				Options:  &ListRequestOptions{},
 			},
 			expectedFolders: []string{"some_folder_parent", "some_folder_child", "some_folder_child2", "some_folder_subchild"},
 		},
@@ -676,10 +864,11 @@ func TestService_listPermission(t *testing.T) {
 			folders: []store.Folder{
 				{UID: "some_folder_1"},
 			},
-			list: ListRequest{
+			list: listRequest{
 				Action:   "dashboards:read",
 				Group:    "dashboard.grafana.app",
 				Resource: "dashboards",
+				Options:  &ListRequestOptions{},
 			},
 		},
 		{
@@ -697,10 +886,11 @@ func TestService_listPermission(t *testing.T) {
 				{UID: "some_folder_parent"},
 				{UID: "some_folder_child", ParentUID: strPtr("some_folder_parent")},
 			},
-			list: ListRequest{
+			list: listRequest{
 				Action:   "folders:read",
 				Group:    "folder.grafana.app",
 				Resource: "folders",
+				Options:  &ListRequestOptions{},
 			},
 			expectedItems: []string{"some_folder_parent", "some_folder_child"},
 		},
@@ -714,7 +904,7 @@ func TestService_listPermission(t *testing.T) {
 			}
 
 			tc.list.Namespace = types.NamespaceInfo{Value: "default", OrgID: 1}
-			got, err := s.listPermission(context.Background(), getScopeMap(tc.permissions), &tc.list)
+			got, err := s.listPermission(context.Background(), s.getScopeMap(tc.permissions), &tc.list)
 			require.NoError(t, err)
 			assert.Equal(t, tc.expectedAll, got.All)
 			assert.ElementsMatch(t, tc.expectedItems, got.Items)
@@ -817,18 +1007,6 @@ func TestService_Check(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name: "should error if an unknown group is provided",
-			req: &authzv1.CheckRequest{
-				Namespace: "org-12",
-				Subject:   "user:test-uid",
-				Group:     "unknown.grafana.app",
-				Resource:  "unknown",
-				Verb:      "get",
-				Name:      "u1",
-			},
-			expectErr: true,
-		},
-		{
 			name: "should error if an unknown verb is provided",
 			req: &authzv1.CheckRequest{
 				Namespace: "org-12",
@@ -903,6 +1081,72 @@ func TestService_Check(t *testing.T) {
 			},
 			expected: true,
 		},
+		{
+			name: "should take into account action sets",
+			req: &authzv1.CheckRequest{
+				Namespace: "org-12",
+				Subject:   "user:test-uid",
+				Group:     "dashboard.grafana.app",
+				Resource:  "dashboards",
+				Verb:      "get",
+				Name:      "dash1",
+			},
+			permissions: []accesscontrol.Permission{
+				{Action: "dashboards:admin", Scope: "dashboards:uid:dash1"},
+			},
+			expected: true,
+		},
+		{
+			name: "should take into account folder action sets for dashboard access",
+			req: &authzv1.CheckRequest{
+				Namespace: "org-12",
+				Subject:   "user:test-uid",
+				Group:     "dashboard.grafana.app",
+				Resource:  "dashboards",
+				Verb:      "get",
+				Name:      "dash1",
+				Folder:    "some_folder",
+			},
+			permissions: []accesscontrol.Permission{
+				{Action: "folders:edit", Scope: "folders:uid:some_folder"},
+			},
+			expected: true,
+		},
+		{
+			name: "lower level action set or action set on a different resource should not grant higher level access",
+			req: &authzv1.CheckRequest{
+				Namespace: "org-12",
+				Subject:   "user:test-uid",
+				Group:     "folder.grafana.app",
+				Resource:  "folders",
+				Verb:      "delete",
+				Name:      "folder1",
+			},
+			permissions: []accesscontrol.Permission{
+				{Action: "folders:view", Scope: "folders:uid:folder1"},
+				{Action: "folders:edit", Scope: "folders:uid:other_folder"},
+			},
+			expected: false,
+		},
+		{
+			// We've had cases where permissions were saved to the database
+			// without splitting the scope into 'kind', 'attribute', and 'identifier'.
+			// Our wildcard check depends on this separation to work correctly.
+			// This test makes sure we can still handle those unsplit permissions.
+			name: "should split wildcard scope if needed",
+			req: &authzv1.CheckRequest{
+				Namespace: "org-12",
+				Subject:   "user:test-uid",
+				Group:     "iam.grafana.app",
+				Resource:  "teams",
+				Verb:      "get",
+				Name:      "t1",
+			},
+			permissions: []accesscontrol.Permission{
+				{Action: "teams:read", Scope: "teams:*"},
+			},
+			expected: true,
+		},
 	}
 	t.Run("User permission check", func(t *testing.T) {
 		for _, tc := range testCases {
@@ -933,6 +1177,10 @@ func TestService_Check(t *testing.T) {
 				if tc.req.Resource == "teams" {
 					expAction = "teams:read"
 				}
+				if tc.req.Resource == "folders" {
+					expAction = "folders:delete"
+				}
+
 				perms, ok := s.permCache.Get(ctx, userPermCacheKey("org-12", "test-uid", expAction))
 				require.True(t, ok)
 				require.Len(t, perms, 1)
@@ -1004,7 +1252,9 @@ func TestService_Check(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "should deny rendering access to another app resources",
+			// Unregistered groups fall back to the K8s-native mapping. The renderer has no
+			// permissions for K8s-native actions, so the check is denied without an error.
+			name: "should deny rendering access to unregistered app resources",
 			req: &authzv1.CheckRequest{
 				Namespace: "org-12",
 				Subject:   "render:0",
@@ -1013,8 +1263,7 @@ func TestService_Check(t *testing.T) {
 				Verb:      "get",
 				Name:      "dash1",
 			},
-			expected:  false,
-			expectErr: true,
+			expected: false,
 		},
 	}
 	t.Run("Rendering permission check", func(t *testing.T) {
@@ -1032,6 +1281,102 @@ func TestService_Check(t *testing.T) {
 				assert.Equal(t, tc.expected, resp.Allowed)
 			})
 		}
+	})
+}
+
+func TestService_K8sNativeFallback(t *testing.T) {
+	callingService := authn.NewAccessTokenAuthInfo(authn.Claims[authn.AccessTokenClaims]{
+		Claims: jwt.Claims{
+			Subject:  types.NewTypeID(types.TypeAccessPolicy, "some-service"),
+			Audience: []string{"authzservice"},
+		},
+		Rest: authn.AccessTokenClaims{Namespace: "org-12"},
+	})
+
+	setup := func(permissions []accesscontrol.Permission) *Service {
+		s := setupService()
+		userID := &store.UserIdentifiers{UID: "test-uid", ID: 1}
+		fStore := &fakeStore{userID: userID, userPermissions: permissions}
+		s.store = fStore
+		s.permissionStore = fStore
+		s.identityStore = &fakeIdentityStore{}
+		return s
+	}
+
+	ctx := types.WithAuthInfo(context.Background(), callingService)
+
+	t.Run("Check: unregistered group denied when no permissions", func(t *testing.T) {
+		s := setup([]accesscontrol.Permission{})
+		resp, err := s.Check(ctx, &authzv1.CheckRequest{
+			Namespace: "org-12",
+			Subject:   "user:test-uid",
+			Group:     "unregistered.grafana.app",
+			Resource:  "widgets",
+			Verb:      "get",
+			Name:      "w1",
+		})
+		require.NoError(t, err)
+		assert.False(t, resp.Allowed)
+	})
+
+	t.Run("Check: unregistered group allowed with K8s-native action", func(t *testing.T) {
+		s := setup([]accesscontrol.Permission{
+			{Action: "unregistered.grafana.app/widgets:get", Scope: "unregistered.grafana.app/widgets:uid:w1"},
+		})
+		resp, err := s.Check(ctx, &authzv1.CheckRequest{
+			Namespace: "org-12",
+			Subject:   "user:test-uid",
+			Group:     "unregistered.grafana.app",
+			Resource:  "widgets",
+			Verb:      "get",
+			Name:      "w1",
+		})
+		require.NoError(t, err)
+		assert.True(t, resp.Allowed)
+	})
+
+	t.Run("Check: unknown verb still errors", func(t *testing.T) {
+		s := setup([]accesscontrol.Permission{})
+		_, err := s.Check(ctx, &authzv1.CheckRequest{
+			Namespace: "org-12",
+			Subject:   "user:test-uid",
+			Group:     "unregistered.grafana.app",
+			Resource:  "widgets",
+			Verb:      "unknownverb",
+			Name:      "w1",
+		})
+		require.Error(t, err)
+	})
+
+	t.Run("List: unregistered group returns empty without error", func(t *testing.T) {
+		s := setup([]accesscontrol.Permission{})
+		resp, err := s.List(ctx, &authzv1.ListRequest{
+			Namespace: "org-12",
+			Subject:   "user:test-uid",
+			Group:     "unregistered.grafana.app",
+			Resource:  "widgets",
+			Verb:      "get",
+		})
+		require.NoError(t, err)
+		assert.Empty(t, resp.Items)
+		assert.Empty(t, resp.Folders)
+		assert.False(t, resp.All)
+	})
+
+	t.Run("List: unregistered group returns items with K8s-native action", func(t *testing.T) {
+		s := setup([]accesscontrol.Permission{
+			{Action: "unregistered.grafana.app/widgets:get", Scope: "unregistered.grafana.app/widgets:uid:w1"},
+			{Action: "unregistered.grafana.app/widgets:get", Scope: "unregistered.grafana.app/widgets:uid:w2"},
+		})
+		resp, err := s.List(ctx, &authzv1.ListRequest{
+			Namespace: "org-12",
+			Subject:   "user:test-uid",
+			Group:     "unregistered.grafana.app",
+			Resource:  "widgets",
+			Verb:      "get",
+		})
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{"w1", "w2"}, resp.Items)
 	})
 }
 
@@ -1228,17 +1573,6 @@ func TestService_List(t *testing.T) {
 			expectErr: true,
 		},
 		{
-			name: "should error if an unknown group is provided",
-			req: &authzv1.ListRequest{
-				Namespace: "org-12",
-				Subject:   "user:test-uid",
-				Group:     "unknown.grafana.app",
-				Resource:  "unknown",
-				Verb:      "get",
-			},
-			expectErr: true,
-		},
-		{
 			name: "should error if an unknown verb is provided",
 			req: &authzv1.ListRequest{
 				Namespace: "org-12",
@@ -1288,6 +1622,27 @@ func TestService_List(t *testing.T) {
 			expected: &authzv1.ListResponse{
 				Items:   []string{"dash1", "dash2"},
 				Folders: []string{"fold1"},
+			},
+		},
+		{
+			name: "should list permissions for user with permission or action set permissions",
+			req: &authzv1.ListRequest{
+				Namespace: "org-12",
+				Subject:   "user:test-uid",
+				Group:     "dashboard.grafana.app",
+				Resource:  "dashboards",
+				Verb:      "get",
+			},
+			permissions: []accesscontrol.Permission{
+				{Action: "dashboards:read", Scope: "dashboards:uid:dash1"},
+				{Action: "dashboards:read", Scope: "dashboards:uid:dash2"},
+				{Action: "dashboards:read", Scope: "folders:uid:fold1"},
+				{Action: "dashboards:edit", Scope: "dashboards:uid:dash3"},
+				{Action: "folders:view", Scope: "folders:uid:fold2"},
+			},
+			expected: &authzv1.ListResponse{
+				Items:   []string{"dash1", "dash2", "dash3"},
+				Folders: []string{"fold1", "fold2"},
 			},
 		},
 		{
@@ -1404,7 +1759,9 @@ func TestService_List(t *testing.T) {
 			},
 		},
 		{
-			name: "should deny rendering access to another app resources",
+			// Unregistered groups fall back to the K8s-native mapping. The renderer has no
+			// permissions for K8s-native actions, so the list is empty rather than an error.
+			name: "should deny rendering access to unregistered app resources",
 			req: &authzv1.ListRequest{
 				Namespace: "org-12",
 				Subject:   "render:0",
@@ -1412,7 +1769,7 @@ func TestService_List(t *testing.T) {
 				Resource:  "dashboards",
 				Verb:      "get",
 			},
-			expectErr: true,
+			expected: &authzv1.ListResponse{},
 		},
 	}
 	t.Run("Rendering permission list", func(t *testing.T) {
@@ -1622,7 +1979,13 @@ func (f *fakeStore) GetUserPermissions(ctx context.Context, namespace types.Name
 	if f.err {
 		return nil, fmt.Errorf("store error")
 	}
-	return f.userPermissions, nil
+	var permissions []accesscontrol.Permission
+	for _, p := range f.userPermissions {
+		if p.Action == query.Action || slices.Contains(query.ActionSets, p.Action) {
+			permissions = append(permissions, p)
+		}
+	}
+	return permissions, nil
 }
 
 func (f *fakeStore) ListFolders(ctx context.Context, namespace types.NamespaceInfo) ([]store.Folder, error) {
@@ -1672,4 +2035,644 @@ func (f *fakeIdentityStore) ListTeams(ctx context.Context, namespace types.Names
 		return nil, fmt.Errorf("identity store error")
 	}
 	return &legacy.ListTeamResult{Teams: f.teams}, nil
+}
+
+func TestService_BatchCheck(t *testing.T) {
+	callingService := authn.NewAccessTokenAuthInfo(authn.Claims[authn.AccessTokenClaims]{
+		Claims: jwt.Claims{
+			Subject:  types.NewTypeID(types.TypeAccessPolicy, "some-service"),
+			Audience: []string{"authzservice"},
+		},
+		Rest: authn.AccessTokenClaims{Namespace: "org-12"},
+	})
+
+	type testCase struct {
+		name        string
+		req         *authzv1.BatchCheckRequest
+		permissions []accesscontrol.Permission
+		folders     []store.Folder
+		expected    map[string]bool
+		expectErr   map[string]bool
+	}
+
+	t.Run("Require auth info", func(t *testing.T) {
+		s := setupService()
+		ctx := context.Background()
+		_, err := s.BatchCheck(ctx, &authzv1.BatchCheckRequest{
+			Namespace: "org-12",
+			Subject:   "user:test-uid",
+			Checks: []*authzv1.BatchCheckItem{
+				{
+					CorrelationId: "check1",
+					Group:         "dashboard.grafana.app",
+					Resource:      "dashboards",
+					Verb:          "get",
+					Name:          "dash1",
+				},
+			},
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "could not get auth info")
+	})
+
+	t.Run("Empty checks list", func(t *testing.T) {
+		s := setupService()
+		ctx := types.WithAuthInfo(context.Background(), callingService)
+		resp, err := s.BatchCheck(ctx, &authzv1.BatchCheckRequest{
+			Namespace: "org-12",
+			Subject:   "user:test-uid",
+			Checks:    []*authzv1.BatchCheckItem{},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, 0, len(resp.Results))
+	})
+
+	t.Run("Invalid namespace", func(t *testing.T) {
+		s := setupService()
+		ctx := types.WithAuthInfo(context.Background(), callingService)
+		resp, err := s.BatchCheck(ctx, &authzv1.BatchCheckRequest{
+			Namespace: "", // Empty namespace
+			Subject:   "user:test-uid",
+			Checks: []*authzv1.BatchCheckItem{
+				{
+					CorrelationId: "check1",
+					Group:         "dashboard.grafana.app",
+					Resource:      "dashboards",
+					Verb:          "get",
+					Name:          "dash1",
+				},
+			},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, 1, len(resp.Results))
+		require.False(t, resp.Results["check1"].Allowed)
+		require.Contains(t, resp.Results["check1"].Error, "namespace is required")
+	})
+
+	t.Run("Mismatched namespace", func(t *testing.T) {
+		s := setupService()
+		ctx := types.WithAuthInfo(context.Background(), callingService)
+		resp, err := s.BatchCheck(ctx, &authzv1.BatchCheckRequest{
+			Namespace: "org-13", // Different from calling service namespace
+			Subject:   "user:test-uid",
+			Checks: []*authzv1.BatchCheckItem{
+				{
+					CorrelationId: "check1",
+					Group:         "dashboard.grafana.app",
+					Resource:      "dashboards",
+					Verb:          "get",
+					Name:          "dash1",
+				},
+			},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, 1, len(resp.Results))
+		require.False(t, resp.Results["check1"].Allowed)
+		require.Contains(t, resp.Results["check1"].Error, "namespace does not match")
+	})
+
+	t.Run("Invalid subject", func(t *testing.T) {
+		s := setupService()
+		ctx := types.WithAuthInfo(context.Background(), callingService)
+		resp, err := s.BatchCheck(ctx, &authzv1.BatchCheckRequest{
+			Namespace: "org-12",
+			Subject:   "", // Empty subject
+			Checks: []*authzv1.BatchCheckItem{
+				{
+					CorrelationId: "check1",
+					Group:         "dashboard.grafana.app",
+					Resource:      "dashboards",
+					Verb:          "get",
+					Name:          "dash1",
+				},
+			},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, 1, len(resp.Results))
+		require.False(t, resp.Results["check1"].Allowed)
+		require.Contains(t, resp.Results["check1"].Error, "subject is required")
+	})
+
+	testCases := []testCase{
+		{
+			name: "should handle single check",
+			req: &authzv1.BatchCheckRequest{
+				Namespace: "org-12",
+				Subject:   "user:test-uid",
+				Checks: []*authzv1.BatchCheckItem{
+					{
+						CorrelationId: "check1",
+						Group:         "dashboard.grafana.app",
+						Resource:      "dashboards",
+						Verb:          "get",
+						Name:          "dash1",
+					},
+				},
+			},
+			permissions: []accesscontrol.Permission{
+				{Action: "dashboards:read", Scope: "dashboards:uid:dash1"},
+			},
+			expected: map[string]bool{
+				"check1": true,
+			},
+		},
+		{
+			name: "should handle multiple checks with same action",
+			req: &authzv1.BatchCheckRequest{
+				Namespace: "org-12",
+				Subject:   "user:test-uid",
+				Checks: []*authzv1.BatchCheckItem{
+					{
+						CorrelationId: "check1",
+						Group:         "dashboard.grafana.app",
+						Resource:      "dashboards",
+						Verb:          "get",
+						Name:          "dash1",
+					},
+					{
+						CorrelationId: "check2",
+						Group:         "dashboard.grafana.app",
+						Resource:      "dashboards",
+						Verb:          "get",
+						Name:          "dash2",
+					},
+					{
+						CorrelationId: "check3",
+						Group:         "dashboard.grafana.app",
+						Resource:      "dashboards",
+						Verb:          "get",
+						Name:          "dash3",
+					},
+				},
+			},
+			permissions: []accesscontrol.Permission{
+				{Action: "dashboards:read", Scope: "dashboards:uid:dash1"},
+				{Action: "dashboards:read", Scope: "dashboards:uid:dash2"},
+			},
+			expected: map[string]bool{
+				"check1": true,
+				"check2": true,
+				"check3": false,
+			},
+		},
+		{
+			name: "should handle multiple checks with different actions",
+			req: &authzv1.BatchCheckRequest{
+				Namespace: "org-12",
+				Subject:   "user:test-uid",
+				Checks: []*authzv1.BatchCheckItem{
+					{
+						CorrelationId: "check1",
+						Group:         "dashboard.grafana.app",
+						Resource:      "dashboards",
+						Verb:          "get",
+						Name:          "dash1",
+					},
+					{
+						CorrelationId: "check2",
+						Group:         "folder.grafana.app",
+						Resource:      "folders",
+						Verb:          "get",
+						Name:          "folder1",
+					},
+					{
+						CorrelationId: "check3",
+						Group:         "dashboard.grafana.app",
+						Resource:      "dashboards",
+						Verb:          "delete",
+						Name:          "dash1",
+					},
+				},
+			},
+			permissions: []accesscontrol.Permission{
+				{Action: "dashboards:read", Scope: "dashboards:uid:dash1"},
+				{Action: "folders:read", Scope: "folders:uid:folder1"},
+			},
+			expected: map[string]bool{
+				"check1": true,
+				"check2": true,
+				"check3": false,
+			},
+		},
+		{
+			name: "should handle wildcard permissions",
+			req: &authzv1.BatchCheckRequest{
+				Namespace: "org-12",
+				Subject:   "user:test-uid",
+				Checks: []*authzv1.BatchCheckItem{
+					{
+						CorrelationId: "check1",
+						Group:         "dashboard.grafana.app",
+						Resource:      "dashboards",
+						Verb:          "get",
+						Name:          "dash1",
+					},
+					{
+						CorrelationId: "check2",
+						Group:         "dashboard.grafana.app",
+						Resource:      "dashboards",
+						Verb:          "get",
+						Name:          "dash2",
+					},
+					{
+						CorrelationId: "check3",
+						Group:         "dashboard.grafana.app",
+						Resource:      "dashboards",
+						Verb:          "get",
+						Name:          "dash3",
+					},
+				},
+			},
+			permissions: []accesscontrol.Permission{
+				{Action: "dashboards:read", Scope: "dashboards:uid:*"},
+			},
+			expected: map[string]bool{
+				"check1": true,
+				"check2": true,
+				"check3": true,
+			},
+		},
+		{
+			name: "should handle folder inheritance",
+			req: &authzv1.BatchCheckRequest{
+				Namespace: "org-12",
+				Subject:   "user:test-uid",
+				Checks: []*authzv1.BatchCheckItem{
+					{
+						CorrelationId: "check1",
+						Group:         "dashboard.grafana.app",
+						Resource:      "dashboards",
+						Verb:          "get",
+						Name:          "dash1",
+						Folder:        "folder1",
+					},
+					{
+						CorrelationId: "check2",
+						Group:         "dashboard.grafana.app",
+						Resource:      "dashboards",
+						Verb:          "get",
+						Name:          "dash2",
+						Folder:        "folder2",
+					},
+				},
+			},
+			permissions: []accesscontrol.Permission{
+				{Action: "dashboards:read", Scope: "folders:uid:folder1"},
+			},
+			folders: []store.Folder{
+				{UID: "folder1", ParentUID: nil},
+				{UID: "folder2", ParentUID: nil},
+			},
+			expected: map[string]bool{
+				"check1": true,
+				"check2": false,
+			},
+		},
+		{
+			// An unregistered group falls back to the K8s-native mapping and is denied
+			// (no permissions in the store) rather than returning an error.
+			name: "should handle unregistered group in one check",
+			req: &authzv1.BatchCheckRequest{
+				Namespace: "org-12",
+				Subject:   "user:test-uid",
+				Checks: []*authzv1.BatchCheckItem{
+					{
+						CorrelationId: "check1",
+						Group:         "dashboard.grafana.app",
+						Resource:      "dashboards",
+						Verb:          "get",
+						Name:          "dash1",
+					},
+					{
+						CorrelationId: "check2",
+						Group:         "unregistered.grafana.app",
+						Resource:      "widgets",
+						Verb:          "get",
+						Name:          "widget1",
+					},
+				},
+			},
+			permissions: []accesscontrol.Permission{
+				{Action: "dashboards:read", Scope: "dashboards:uid:dash1"},
+			},
+			expected: map[string]bool{
+				"check1": true,
+				"check2": false, // denied: no permissions granted for this group/resource
+			},
+		},
+		{
+			name: "should use action sets",
+			req: &authzv1.BatchCheckRequest{
+				Namespace: "org-12",
+				Subject:   "user:test-uid",
+				Checks: []*authzv1.BatchCheckItem{
+					{
+						CorrelationId: "check1",
+						Group:         "dashboard.grafana.app",
+						Resource:      "dashboards",
+						Verb:          "get",
+						Name:          "dash1",
+					},
+					{
+						CorrelationId: "check2",
+						Group:         "dashboard.grafana.app",
+						Resource:      "dashboards",
+						Verb:          "update",
+						Name:          "dash1",
+					},
+				},
+			},
+			permissions: []accesscontrol.Permission{
+				{Action: "dashboards:admin", Scope: "dashboards:uid:dash1"},
+			},
+			expected: map[string]bool{
+				"check1": true,
+				"check2": true,
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := setupService()
+			ctx := types.WithAuthInfo(context.Background(), callingService)
+			userID := &store.UserIdentifiers{UID: "test-uid", ID: 1}
+			store := &fakeStore{
+				userID:          userID,
+				userPermissions: tc.permissions,
+				folders:         tc.folders,
+			}
+			s.store = store
+			s.permissionStore = store
+			s.folderStore = store
+			s.identityStore = &fakeIdentityStore{}
+
+			resp, err := s.BatchCheck(ctx, tc.req)
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			require.NotNil(t, resp.Results)
+
+			// Check expected allowed results
+			for checkID, expectedAllowed := range tc.expected {
+				result, ok := resp.Results[checkID]
+				require.True(t, ok, "Expected result for %s", checkID)
+				assert.Equal(t, expectedAllowed, result.Allowed, "Check %s: expected %v, got %v", checkID, expectedAllowed, result.Allowed)
+				if result.Error != "" {
+					t.Logf("Check %s error: %s", checkID, result.Error)
+				}
+			}
+
+			// Check expected error results
+			for checkID, expectError := range tc.expectErr {
+				result, ok := resp.Results[checkID]
+				require.True(t, ok, "Expected result for %s", checkID)
+				if expectError {
+					assert.False(t, result.Allowed, "Check %s should be denied", checkID)
+					assert.NotEmpty(t, result.Error, "Check %s should have an error", checkID)
+				}
+			}
+		})
+	}
+
+	t.Run("should batch permission lookups efficiently", func(t *testing.T) {
+		s := setupService()
+		ctx := types.WithAuthInfo(context.Background(), callingService)
+		userID := &store.UserIdentifiers{UID: "test-uid", ID: 1}
+		fStore := &fakeStore{
+			userID: userID,
+			userPermissions: []accesscontrol.Permission{
+				{Action: "dashboards:read", Scope: "dashboards:uid:*"},
+			},
+		}
+		s.store = fStore
+		s.permissionStore = fStore
+		s.folderStore = fStore
+		s.identityStore = &fakeIdentityStore{}
+
+		// Make multiple checks with the same action
+		// Should only fetch permissions once per action group
+		resp, err := s.BatchCheck(ctx, &authzv1.BatchCheckRequest{
+			Namespace: "org-12",
+			Subject:   "user:test-uid",
+			Checks: []*authzv1.BatchCheckItem{
+				{
+					CorrelationId: "check1",
+					Group:         "dashboard.grafana.app",
+					Resource:      "dashboards",
+					Verb:          "get",
+					Name:          "dash1",
+				},
+				{
+					CorrelationId: "check2",
+					Group:         "dashboard.grafana.app",
+					Resource:      "dashboards",
+					Verb:          "get",
+					Name:          "dash2",
+				},
+				{
+					CorrelationId: "check3",
+					Group:         "dashboard.grafana.app",
+					Resource:      "dashboards",
+					Verb:          "get",
+					Name:          "dash3",
+				},
+			},
+		})
+
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+
+		// All should be allowed
+		require.True(t, resp.Results["check1"].Allowed)
+		require.True(t, resp.Results["check2"].Allowed)
+		require.True(t, resp.Results["check3"].Allowed)
+
+		// Should have called GetUserPermissions only once (plus GetBasicRoles, GetUserIdentifiers, and GetFolders once each)
+		// Total calls should be 4: GetUserIdentifiers(1), GetBasicRoles(1), GetUserPermissions(1), GetFolders(1)
+		assert.LessOrEqual(t, fStore.calls, 4, "Should batch permission lookups efficiently")
+	})
+
+	t.Run("should skip cache when freshness_timestamp is recent", func(t *testing.T) {
+		s := setupService()
+		s.settings.CacheTTL = 30 * time.Second
+		ctx := types.WithAuthInfo(context.Background(), callingService)
+		userID := &store.UserIdentifiers{UID: "test-uid", ID: 1}
+		fStore := &fakeStore{
+			userID: userID,
+			userPermissions: []accesscontrol.Permission{
+				{Action: "dashboards:read", Scope: "dashboards:uid:dash1"},
+			},
+		}
+		s.store = fStore
+		s.permissionStore = fStore
+		s.folderStore = fStore
+		s.identityStore = &fakeIdentityStore{}
+
+		// First call to populate cache
+		resp1, err := s.BatchCheck(ctx, &authzv1.BatchCheckRequest{
+			Namespace: "org-12",
+			Subject:   "user:test-uid",
+			Checks: []*authzv1.BatchCheckItem{
+				{
+					CorrelationId: "check1",
+					Group:         "dashboard.grafana.app",
+					Resource:      "dashboards",
+					Verb:          "get",
+					Name:          "dash1",
+				},
+			},
+		})
+		require.NoError(t, err)
+		require.True(t, resp1.Results["check1"].Allowed)
+		initialCalls := fStore.calls
+
+		// Second call with fresh timestamp (within cache TTL) should skip cache
+		freshTimestamp := time.Now().Add(-10 * time.Second).UnixMilli()
+		resp2, err := s.BatchCheck(ctx, &authzv1.BatchCheckRequest{
+			Namespace: "org-12",
+			Subject:   "user:test-uid",
+			Checks: []*authzv1.BatchCheckItem{
+				{
+					CorrelationId:      "check2",
+					Group:              "dashboard.grafana.app",
+					Resource:           "dashboards",
+					Verb:               "get",
+					Name:               "dash1",
+					FreshnessTimestamp: freshTimestamp,
+				},
+			},
+		})
+		require.NoError(t, err)
+		require.True(t, resp2.Results["check2"].Allowed)
+
+		// Should have made additional calls to fetch fresh data
+		assert.Greater(t, fStore.calls, initialCalls, "Should skip cache and fetch fresh data")
+	})
+
+	t.Run("should use cache when freshness_timestamp is old", func(t *testing.T) {
+		s := setupService()
+		s.settings.CacheTTL = 30 * time.Second
+		ctx := types.WithAuthInfo(context.Background(), callingService)
+		userID := &store.UserIdentifiers{UID: "test-uid", ID: 1}
+		fStore := &fakeStore{
+			userID: userID,
+			userPermissions: []accesscontrol.Permission{
+				{Action: "dashboards:read", Scope: "dashboards:uid:dash1"},
+			},
+		}
+		s.store = fStore
+		s.permissionStore = fStore
+		s.folderStore = fStore
+		s.identityStore = &fakeIdentityStore{}
+
+		// First call to populate cache
+		resp1, err := s.BatchCheck(ctx, &authzv1.BatchCheckRequest{
+			Namespace: "org-12",
+			Subject:   "user:test-uid",
+			Checks: []*authzv1.BatchCheckItem{
+				{
+					CorrelationId: "check1",
+					Group:         "dashboard.grafana.app",
+					Resource:      "dashboards",
+					Verb:          "get",
+					Name:          "dash1",
+				},
+			},
+		})
+		require.NoError(t, err)
+		require.True(t, resp1.Results["check1"].Allowed)
+		initialCalls := fStore.calls
+
+		// Second call with old timestamp (outside cache TTL) should use cache
+		oldTimestamp := time.Now().Add(-60 * time.Second).UnixMilli()
+		resp2, err := s.BatchCheck(ctx, &authzv1.BatchCheckRequest{
+			Namespace: "org-12",
+			Subject:   "user:test-uid",
+			Checks: []*authzv1.BatchCheckItem{
+				{
+					CorrelationId:      "check2",
+					Group:              "dashboard.grafana.app",
+					Resource:           "dashboards",
+					Verb:               "get",
+					Name:               "dash1",
+					FreshnessTimestamp: oldTimestamp,
+				},
+			},
+		})
+		require.NoError(t, err)
+		require.True(t, resp2.Results["check2"].Allowed)
+
+		// Should not have made additional calls (used cache)
+		assert.Equal(t, initialCalls, fStore.calls, "Should use cache for old freshness timestamp")
+	})
+
+	t.Run("should skip cache for entire group if any item requires fresh data", func(t *testing.T) {
+		s := setupService()
+		s.settings.CacheTTL = 30 * time.Second
+		ctx := types.WithAuthInfo(context.Background(), callingService)
+		userID := &store.UserIdentifiers{UID: "test-uid", ID: 1}
+		fStore := &fakeStore{
+			userID: userID,
+			userPermissions: []accesscontrol.Permission{
+				{Action: "dashboards:read", Scope: "dashboards:uid:*"},
+			},
+		}
+		s.store = fStore
+		s.permissionStore = fStore
+		s.folderStore = fStore
+		s.identityStore = &fakeIdentityStore{}
+
+		// First call to populate cache
+		resp1, err := s.BatchCheck(ctx, &authzv1.BatchCheckRequest{
+			Namespace: "org-12",
+			Subject:   "user:test-uid",
+			Checks: []*authzv1.BatchCheckItem{
+				{
+					CorrelationId: "check1",
+					Group:         "dashboard.grafana.app",
+					Resource:      "dashboards",
+					Verb:          "get",
+					Name:          "dash1",
+				},
+			},
+		})
+		require.NoError(t, err)
+		require.True(t, resp1.Results["check1"].Allowed)
+		initialCalls := fStore.calls
+
+		// Second call with multiple items, one with fresh timestamp
+		freshTimestamp := time.Now().Add(-10 * time.Second).UnixMilli()
+		resp2, err := s.BatchCheck(ctx, &authzv1.BatchCheckRequest{
+			Namespace: "org-12",
+			Subject:   "user:test-uid",
+			Checks: []*authzv1.BatchCheckItem{
+				{
+					CorrelationId: "check2",
+					Group:         "dashboard.grafana.app",
+					Resource:      "dashboards",
+					Verb:          "get",
+					Name:          "dash2",
+					// No freshness timestamp - would normally use cache
+				},
+				{
+					CorrelationId:      "check3",
+					Group:              "dashboard.grafana.app",
+					Resource:           "dashboards",
+					Verb:               "get",
+					Name:               "dash3",
+					FreshnessTimestamp: freshTimestamp, // Fresh timestamp - skip cache
+				},
+			},
+		})
+		require.NoError(t, err)
+		require.True(t, resp2.Results["check2"].Allowed)
+		require.True(t, resp2.Results["check3"].Allowed)
+
+		// Should have made additional calls because one item required fresh data
+		assert.Greater(t, fStore.calls, initialCalls, "Should skip cache for entire group if any item requires fresh data")
+	})
 }

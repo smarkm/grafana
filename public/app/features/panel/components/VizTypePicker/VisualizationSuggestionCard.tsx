@@ -1,62 +1,53 @@
 import { css, cx } from '@emotion/css';
 import { cloneDeep } from 'lodash';
-import { CSSProperties } from 'react';
+import { CSSProperties, HTMLAttributes, ReactNode } from 'react';
 
-import { GrafanaTheme2, PanelData, VisualizationSuggestion } from '@grafana/data';
+import { GrafanaTheme2, PanelData, PanelPluginVisualizationSuggestion } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
 import { Tooltip, useStyles2 } from '@grafana/ui';
 
 import { PanelRenderer } from '../PanelRenderer';
 
-import { VizTypeChangeDetails } from './types';
-
-export interface Props {
+export interface Props extends HTMLAttributes<HTMLDivElement> {
   data: PanelData;
   width: number;
-  suggestion: VisualizationSuggestion;
-  onChange: (details: VizTypeChangeDetails) => void;
+  suggestion: PanelPluginVisualizationSuggestion;
+  isSelected?: boolean;
 }
 
-export function VisualizationSuggestionCard({ data, suggestion, onChange, width }: Props) {
+export function VisualizationSuggestionCard({ data, suggestion, width, className, isSelected, ...restProps }: Props) {
   const styles = useStyles2(getStyles);
   const { innerStyles, outerStyles, renderWidth, renderHeight } = getPreviewDimensionsAndStyles(width);
   const cardOptions = suggestion.cardOptions ?? {};
 
   const commonButtonProps = {
     'aria-label': suggestion.name,
-    className: styles.vizBox,
+    className: cx(className, styles.vizBox, isSelected && styles.selected),
     'data-testid': selectors.components.VisualizationPreview.card(suggestion.name),
     style: outerStyles,
-    onClick: () => {
-      onChange({
-        pluginId: suggestion.pluginId,
-        options: suggestion.options,
-        fieldConfig: suggestion.fieldConfig,
-      });
-    },
-  };
+    ...restProps,
+  } satisfies HTMLAttributes<HTMLDivElement> & { 'data-testid': string };
+
+  let content: ReactNode;
 
   if (cardOptions.imgSrc) {
-    return (
-      <Tooltip content={suggestion.description ?? suggestion.name}>
-        <button {...commonButtonProps} className={cx(styles.vizBox, styles.imgBox)}>
-          <div className={styles.name}>{suggestion.name}</div>
-          <img className={styles.img} src={cardOptions.imgSrc} alt={suggestion.name} />
-        </button>
-      </Tooltip>
+    content = (
+      <div {...commonButtonProps} className={cx(commonButtonProps.className, styles.imgBox)}>
+        <div className={styles.name}>{suggestion.name}</div>
+        <img className={styles.img} src={cardOptions.imgSrc} alt={suggestion.name} />
+      </div>
     );
-  }
+  } else {
+    let preview = suggestion;
+    if (suggestion.cardOptions?.previewModifier) {
+      preview = cloneDeep(suggestion);
+      suggestion.cardOptions.previewModifier(preview);
+    }
 
-  let preview = suggestion;
-  if (suggestion.cardOptions?.previewModifier) {
-    preview = cloneDeep(suggestion);
-    suggestion.cardOptions.previewModifier(preview);
-  }
-
-  return (
-    <button {...commonButtonProps}>
-      <Tooltip content={suggestion.name}>
-        <div style={innerStyles} className={styles.renderContainer}>
+    content = (
+      <div {...commonButtonProps}>
+        {/* to use inert in React 18, we have to do this hacky object spread thing. https://stackoverflow.com/questions/72720469/error-when-using-inert-attribute-with-typescript */}
+        <div style={innerStyles} className={styles.renderContainer} {...{ inert: '' }}>
           <PanelRenderer
             title=""
             data={data}
@@ -66,22 +57,18 @@ export function VisualizationSuggestionCard({ data, suggestion, onChange, width 
             options={preview.options}
             fieldConfig={preview.fieldConfig}
           />
-          <div className={styles.hoverPane} />
         </div>
-      </Tooltip>
-    </button>
-  );
+      </div>
+    );
+  }
+
+  return <Tooltip content={suggestion.description ?? suggestion.name}>{content}</Tooltip>;
 }
 
 const getStyles = (theme: GrafanaTheme2) => {
   return {
-    hoverPane: css({
-      position: 'absolute',
-      top: 0,
-      right: 0,
-      left: 0,
-      borderRadius: theme.spacing(2),
-      bottom: 0,
+    selectedSuggestion: css({
+      filter: `blur(1px) ${theme.isDark ? 'brightness(0.5)' : 'opacity(0.3)'}`,
     }),
     vizBox: css({
       position: 'relative',
@@ -91,14 +78,19 @@ const getStyles = (theme: GrafanaTheme2) => {
       border: `1px solid ${theme.colors.border.medium}`,
 
       [theme.transitions.handleMotion('no-preference', 'reduce')]: {
-        transition: theme.transitions.create(['background'], {
+        transition: theme.transitions.create(['background', 'border-color'], {
           duration: theme.transitions.duration.short,
         }),
       },
 
       '&:hover': {
         background: theme.colors.background.secondary,
+        borderColor: theme.colors.primary.border,
       },
+    }),
+    selected: css({
+      borderColor: theme.colors.primary.border,
+      background: theme.colors.background.secondary,
     }),
     imgBox: css({
       display: 'flex',
@@ -132,6 +124,7 @@ const getStyles = (theme: GrafanaTheme2) => {
       transformOrigin: 'left top',
       top: '6px',
       left: '6px',
+      '&& *': { scrollbarWidth: 'none' },
     }),
   };
 };
@@ -145,11 +138,21 @@ interface PreviewDimensionsAndStyles {
 
 function getPreviewDimensionsAndStyles(width: number): PreviewDimensionsAndStyles {
   const aspectRatio = 16 / 10;
-  const showWidth = width;
-  const showHeight = width * (1 / aspectRatio);
   const renderWidth = 350;
   const renderHeight = renderWidth * (1 / aspectRatio);
 
+  // width is 0 on the first render (before useMeasure)
+  if (width === 0) {
+    return {
+      renderWidth,
+      renderHeight,
+      outerStyles: { width: '100%', aspectRatio: `${aspectRatio}` },
+      innerStyles: { display: 'none' },
+    };
+  }
+
+  const showWidth = width;
+  const showHeight = width * (1 / aspectRatio);
   const padding = 6;
   const widthFactor = (showWidth - padding * 2) / renderWidth;
   const heightFactor = (showHeight - padding * 2) / renderHeight;

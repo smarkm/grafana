@@ -8,11 +8,12 @@ import { useStyles2 } from '../../themes/ThemeContext';
 import { getChildId } from '../../utils/reactUtils';
 
 import { FieldValidationMessage } from './FieldValidationMessage';
-import { Label } from './Label';
+import { Label, getLabelStyles } from './Label';
+import { RadioButtonGroup } from './RadioButtonGroup/RadioButtonGroup';
 
-export interface FieldProps extends HTMLAttributes<HTMLDivElement> {
+export interface FieldProps extends HTMLAttributes<HTMLElement> {
   /** Form input element, i.e Input or Switch */
-  children: React.ReactElement;
+  children: React.ReactElement<Record<string, unknown>>;
   /** Label for the field */
   label?: React.ReactNode;
   /** Description of the field */
@@ -43,10 +44,15 @@ export interface FieldProps extends HTMLAttributes<HTMLDivElement> {
   noMargin?: boolean;
 }
 
+/**
+ * Field is the basic component for rendering form elements together with labels and description.
+ *
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/forms-field--docs
+ */
 export const Field = React.forwardRef<HTMLDivElement, FieldProps>(
   (
     {
-      label,
+      label: labelProp,
       description,
       horizontal,
       invalid,
@@ -64,23 +70,37 @@ export const Field = React.forwardRef<HTMLDivElement, FieldProps>(
     ref
   ) => {
     const styles = useStyles2(getFieldStyles, noMargin);
+    const labelStyles = useStyles2(getLabelStyles);
+    const useFieldset = children.type === RadioButtonGroup;
+    const label = typeof labelProp === 'string' ? `${labelProp}${required ? ' *' : ''}` : labelProp;
     const inputId = htmlFor ?? getChildId(children);
 
-    const labelElement =
-      typeof label === 'string' ? (
-        <Label htmlFor={inputId} description={description}>
-          {`${label}${required ? ' *' : ''}`}
-        </Label>
-      ) : (
-        label
-      );
+    let labelElement = label;
+
+    if (typeof label === 'string') {
+      if (useFieldset) {
+        labelElement = (
+          <legend className={labelStyles.label}>
+            <div className={labelStyles.labelContent}>{label}</div>
+            {description && <span className={labelStyles.description}>{description}</span>}
+          </legend>
+        );
+      } else {
+        labelElement = (
+          <Label htmlFor={inputId} description={description}>
+            {label}
+          </Label>
+        );
+      }
+    }
 
     const childProps = deleteUndefinedProps({ invalid, disabled, loading });
+    const Wrapper = useFieldset ? 'fieldset' : 'div';
     return (
-      <div className={cx(styles.field, horizontal && styles.fieldHorizontal, className)} {...otherProps}>
+      <Wrapper className={cx(styles.field, horizontal && styles.fieldHorizontal, className)} {...otherProps}>
         {labelElement}
         <div>
-          <div ref={ref}>{React.cloneElement(children, childProps)}</div>
+          <div ref={ref}>{React.cloneElement(children, children.type !== React.Fragment ? childProps : undefined)}</div>
           {invalid && error && !horizontal && (
             <div
               className={cx(styles.fieldValidationWrapper, {
@@ -101,7 +121,7 @@ export const Field = React.forwardRef<HTMLDivElement, FieldProps>(
             <FieldValidationMessage>{error}</FieldValidationMessage>
           </div>
         )}
-      </div>
+      </Wrapper>
     );
   }
 );

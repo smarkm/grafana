@@ -17,14 +17,14 @@ import (
 	"github.com/grafana/grafana/pkg/services/tag/tagimpl"
 	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/setting"
+	"github.com/grafana/grafana/pkg/util/testutil"
 )
 
 var testFeatureToggles = featuremgmt.WithFeatures(featuremgmt.FlagPanelTitleSearch)
 
 func TestIntegrationDashboardFolderDataAccess(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	t.Run("Testing DB", func(t *testing.T) {
 		var sqlStore db.DB
 		var cfg *setting.Cfg
@@ -38,7 +38,7 @@ func TestIntegrationDashboardFolderDataAccess(t *testing.T) {
 			var err error
 			dashboardStore, err = ProvideDashboardStore(sqlStore, cfg, testFeatureToggles, tagimpl.ProvideService(sqlStore))
 			require.NoError(t, err)
-			folderStore = folderimpl.ProvideStore(sqlStore)
+			folderStore = folderimpl.ProvideStore(sqlStore, cfg)
 			require.NoError(t, err)
 			flder = insertTestDashFolder(t, dashboardStore, folderStore, "1 test dash folder", 1, 0, "", "prod", "webapp")
 			dashInRoot = insertTestDashboard(t, dashboardStore, "test dash 67", 1, 0, "", false, "prod", "webapp")

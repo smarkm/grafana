@@ -32,6 +32,7 @@ import TTraceTimeline from '../types/TTraceTimeline';
 import { SpanLinkFunc } from '../types/links';
 import { TraceSpan, Trace, TraceSpanReference, CriticalPathSection } from '../types/trace';
 import { getColorByKey } from '../utils/color-generator';
+import { getServiceColorKey, getServiceDisplayName } from '../utils/service-name';
 
 import ListView from './ListView';
 import SpanBarRow from './SpanBarRow';
@@ -101,9 +102,8 @@ type TVirtualizedTraceViewOwnProps = {
   focusedSpanId?: string;
   focusedSpanIdForSearch: string;
   showSpanFilterMatchesOnly: boolean;
-  showCriticalPathSpansOnly: boolean;
   createFocusSpanLink: (traceId: string, spanId: string) => LinkModel;
-  topOfViewRef?: RefObject<HTMLDivElement>;
+  topOfViewRef?: RefObject<HTMLDivElement | null>;
   datasourceType: string;
   datasourceUid: string;
   headerHeight: number;
@@ -134,18 +134,15 @@ function generateRowStates(
   detailStates: Map<string, DetailState | TNil>,
   findMatchesIDs: Set<string> | TNil,
   showSpanFilterMatchesOnly: boolean,
-  showCriticalPathSpansOnly: boolean,
   criticalPath: CriticalPathSection[]
 ): RowState[] {
   if (!spans) {
     return [];
   }
+  // Apply filtering when matchesOnly is enabled
+  // Critical path filtering is now integrated into findMatchesIDs
   if (showSpanFilterMatchesOnly && findMatchesIDs) {
     spans = spans.filter((span) => findMatchesIDs.has(span.spanID));
-  }
-
-  if (showCriticalPathSpansOnly && criticalPath) {
-    spans = spans.filter((span) => criticalPath.find((section) => section.spanId === span.spanID));
   }
 
   let collapseDepth = null;
@@ -197,7 +194,6 @@ function generateRowStatesFromTrace(
   detailStates: Map<string, DetailState | TNil>,
   findMatchesIDs: Set<string> | TNil,
   showSpanFilterMatchesOnly: boolean,
-  showCriticalPathSpansOnly: boolean,
   criticalPath: CriticalPathSection[]
 ): RowState[] {
   return trace
@@ -207,7 +203,6 @@ function generateRowStatesFromTrace(
         detailStates,
         findMatchesIDs,
         showSpanFilterMatchesOnly,
-        showCriticalPathSpansOnly,
         criticalPath
       )
     : [];
@@ -269,22 +264,14 @@ export class UnthemedVirtualizedTraceView extends React.Component<VirtualizedTra
   }
 
   getRowStates(): RowState[] {
-    const {
-      childrenHiddenIDs,
-      detailStates,
-      trace,
-      findMatchesIDs,
-      showSpanFilterMatchesOnly,
-      showCriticalPathSpansOnly,
-      criticalPath,
-    } = this.props;
+    const { childrenHiddenIDs, detailStates, trace, findMatchesIDs, showSpanFilterMatchesOnly, criticalPath } =
+      this.props;
     return memoizedGenerateRowStates(
       trace,
       childrenHiddenIDs,
       detailStates,
       findMatchesIDs,
       showSpanFilterMatchesOnly,
-      showCriticalPathSpansOnly,
       criticalPath
     );
   }
@@ -416,7 +403,7 @@ export class UnthemedVirtualizedTraceView extends React.Component<VirtualizedTra
     visibleSpanIds: string[]
   ) {
     const { spanID, childSpanIds } = span;
-    const { serviceName } = span.process;
+    const serviceColorKey = getServiceColorKey(span.process);
     const {
       childrenHiddenIDs,
       childrenToggle,
@@ -441,7 +428,7 @@ export class UnthemedVirtualizedTraceView extends React.Component<VirtualizedTra
     if (!trace) {
       return null;
     }
-    const color = getColorByKey(serviceName, theme);
+    const color = getColorByKey(serviceColorKey, theme);
     const isCollapsed = childrenHiddenIDs.has(spanID);
     const isDetailExpanded = detailStates.has(spanID);
     const isMatchingFilter = findMatchesIDs ? findMatchesIDs.has(spanID) : false;
@@ -455,9 +442,9 @@ export class UnthemedVirtualizedTraceView extends React.Component<VirtualizedTra
       if (rpcSpan) {
         const rpcViewBounds = this.getViewedBounds()(rpcSpan.startTime, rpcSpan.startTime + rpcSpan.duration);
         rpc = {
-          color: getColorByKey(rpcSpan.process.serviceName, theme),
+          color: getColorByKey(getServiceColorKey(rpcSpan.process), theme),
           operationName: rpcSpan.operationName,
-          serviceName: rpcSpan.process.serviceName,
+          serviceName: getServiceDisplayName(rpcSpan.process),
           viewEnd: rpcViewBounds.end,
           viewStart: rpcViewBounds.start,
         };
@@ -524,7 +511,9 @@ export class UnthemedVirtualizedTraceView extends React.Component<VirtualizedTra
           removeHoverIndentGuideId={removeHoverIndentGuideId}
           createSpanLink={createSpanLink}
           datasourceType={datasourceType}
-          showServiceName={prevSpan === null || prevSpan.process.serviceName !== span.process.serviceName}
+          showServiceName={
+            prevSpan === null || getServiceColorKey(prevSpan.process) !== getServiceColorKey(span.process)
+          }
           visibleSpanIds={visibleSpanIds}
           criticalPath={criticalPathSections}
         />
@@ -534,7 +523,7 @@ export class UnthemedVirtualizedTraceView extends React.Component<VirtualizedTra
 
   renderSpanDetailRow(span: TraceSpan, key: string, style: React.CSSProperties, attrs: {}, visibleSpanIds: string[]) {
     const { spanID } = span;
-    const { serviceName } = span.process;
+    const serviceColorKey = getServiceColorKey(span.process);
     const {
       detailLogItemToggle,
       detailLogsToggle,
@@ -569,7 +558,7 @@ export class UnthemedVirtualizedTraceView extends React.Component<VirtualizedTra
     if (!trace || !detailState) {
       return null;
     }
-    const color = getColorByKey(serviceName, theme);
+    const color = getColorByKey(serviceColorKey, theme);
     const styles = getStyles();
 
     return (
@@ -658,7 +647,7 @@ export class UnthemedVirtualizedTraceView extends React.Component<VirtualizedTra
           <ToolbarButton
             className={styles.scrollToTopButton}
             onClick={this.scrollToTop}
-            title={t('explore.unthemed-virtualized-trace-view.title-scroll-to-top', 'Scroll to top')}
+            tooltip={t('explore.unthemed-virtualized-trace-view.title-scroll-to-top', 'Scroll to top')}
             icon="arrow-up"
           ></ToolbarButton>
         )}

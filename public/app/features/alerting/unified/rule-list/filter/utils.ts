@@ -5,9 +5,12 @@ import { RulesFilter } from '../../search/rulesSearchParser';
 
 import { AdvancedFilters } from './types';
 
-export function formAdvancedFiltersToRuleFilter(values: AdvancedFilters): RulesFilter {
+export function formAdvancedFiltersToRuleFilter(
+  values: AdvancedFilters,
+  existingFreeFormWords: string[] = []
+): RulesFilter {
   return {
-    freeFormWords: [],
+    freeFormWords: existingFreeFormWords,
     ...values,
     namespace: values.namespace || undefined,
     groupName: values.groupName || undefined,
@@ -16,13 +19,14 @@ export function formAdvancedFiltersToRuleFilter(values: AdvancedFilters): RulesF
     ruleState: values.ruleState === '*' ? undefined : values.ruleState,
     ruleType: values.ruleType === '*' ? undefined : values.ruleType,
     plugins: values.plugins === 'show' ? undefined : 'hide',
+    ruleSource: values.ruleSource ?? undefined,
   };
 }
 
 export const emptyAdvancedFilters: AdvancedFilters = {
   namespace: null,
   groupName: null,
-  ruleName: undefined,
+  ruleName: '',
   ruleType: '*',
   ruleState: '*',
   dataSourceNames: [],
@@ -31,13 +35,32 @@ export const emptyAdvancedFilters: AdvancedFilters = {
   dashboardUid: undefined,
   plugins: 'show',
   contactPoint: null,
+  ruleSource: null,
 };
+
+export function advancedFiltersToRulesFilter(values: AdvancedFilters, freeFormWords: string[] = []): RulesFilter {
+  return {
+    freeFormWords,
+    ruleName: values.ruleName || undefined,
+    namespace: values.namespace || undefined,
+    groupName: values.groupName || undefined,
+    ruleType: values.ruleType === '*' ? undefined : values.ruleType,
+    ruleState: values.ruleState === '*' ? undefined : values.ruleState,
+    dataSourceNames: values.dataSourceNames ?? [],
+    labels: values.labels ?? [],
+    ruleHealth: values.ruleHealth === '*' ? undefined : values.ruleHealth,
+    dashboardUid: values.dashboardUid || undefined,
+    plugins: values.plugins === 'show' ? undefined : 'hide',
+    contactPoint: values.contactPoint || undefined,
+    ruleSource: values.ruleSource ?? undefined,
+  };
+}
 
 export function searchQueryToDefaultValues(filterState: RulesFilter): AdvancedFilters {
   return {
     namespace: filterState.namespace ?? null,
     groupName: filterState.groupName ?? null,
-    ruleName: filterState.ruleName,
+    ruleName: filterState.ruleName ?? '',
     ruleType: filterState.ruleType ?? '*',
     ruleState: filterState.ruleState ?? '*',
     dataSourceNames: filterState.dataSourceNames,
@@ -46,6 +69,7 @@ export function searchQueryToDefaultValues(filterState: RulesFilter): AdvancedFi
     dashboardUid: filterState.dashboardUid,
     plugins: filterState.plugins ?? 'show',
     contactPoint: filterState.contactPoint ?? null,
+    ruleSource: filterState.ruleSource ?? null,
   };
 }
 

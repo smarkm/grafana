@@ -19,6 +19,9 @@ type Builder struct {
 	Dialect  migrator.Dialect
 	Features featuremgmt.FeatureToggles
 
+	// ForceDashboardTitleIndex (MySQL only): when true, uses FORCE INDEX (IDX_dashboard_title). Set from config.
+	ForceDashboardTitleIndex bool
+
 	params []any
 	sql    bytes.Buffer
 }
@@ -136,7 +139,12 @@ func (b *Builder) applyFilters() (ordering string) {
 		}
 	}
 
-	b.sql.WriteString("SELECT dashboard.id FROM dashboard")
+	forceIndex := ""
+	if b.Dialect.DriverName() == migrator.MySQL && b.ForceDashboardTitleIndex {
+		forceIndex = " FORCE INDEX (IDX_dashboard_title) "
+	}
+
+	b.sql.WriteString(fmt.Sprintf("SELECT dashboard.id FROM dashboard %s", forceIndex))
 	b.sql.WriteString(strings.Join(joins, ""))
 
 	if len(wheres) > 0 {
@@ -169,7 +177,7 @@ func (b *Builder) applyFilters() (ordering string) {
 		b.params = append(b.params, groupParams...)
 	}
 
-	orderByCols := []string{}
+	orderByCols := make([]string, 0, len(orders))
 	for _, o := range orders {
 		orderByCols = append(orderByCols, b.Dialect.OrderBy(o))
 	}

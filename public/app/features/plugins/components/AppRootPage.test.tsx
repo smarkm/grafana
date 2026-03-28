@@ -15,7 +15,7 @@ import { AddedComponentsRegistry } from '../extensions/registry/AddedComponentsR
 import { AddedFunctionsRegistry } from '../extensions/registry/AddedFunctionsRegistry';
 import { AddedLinksRegistry } from '../extensions/registry/AddedLinksRegistry';
 import { ExposedComponentsRegistry } from '../extensions/registry/ExposedComponentsRegistry';
-import { importAppPlugin } from '../pluginLoader';
+import { pluginImporter } from '../importer/pluginImporter';
 import { getPluginSettings } from '../pluginSettings';
 
 import AppRootPage from './AppRootPage';
@@ -23,8 +23,8 @@ import AppRootPage from './AppRootPage';
 jest.mock('../pluginSettings', () => ({
   getPluginSettings: jest.fn(),
 }));
-jest.mock('../pluginLoader', () => ({
-  importAppPlugin: jest.fn(),
+jest.mock('../importer/pluginImporter', () => ({
+  pluginImporter: { importApp: jest.fn() },
 }));
 
 jest.mock('@grafana/runtime', () => ({
@@ -42,12 +42,15 @@ jest.mock('@grafana/runtime', () => ({
         },
       },
     },
+    unifiedAlerting: {
+      minInterval: '10s',
+    },
   },
 }));
 
-const importAppPluginMock = importAppPlugin as jest.Mock<
-  ReturnType<typeof importAppPlugin>,
-  Parameters<typeof importAppPlugin>
+const importAppPluginMock = pluginImporter.importApp as jest.Mock<
+  ReturnType<typeof pluginImporter.importApp>,
+  Parameters<typeof pluginImporter.importApp>
 >;
 
 const getPluginSettingsMock = getPluginSettings as jest.Mock<
@@ -55,6 +58,8 @@ const getPluginSettingsMock = getPluginSettings as jest.Mock<
   Parameters<typeof getPluginSettings>
 >;
 
+// don't care about this component - it's just for a test
+// eslint-disable-next-line react-prefer-function-component/react-prefer-function-component
 class RootComponent extends Component<AppRootProps> {
   static timesRendered = 0;
   render() {
@@ -89,10 +94,10 @@ function renderUnderRouter(page = '') {
   appPluginNavItem.parentItem = appsSection;
 
   const registries = {
-    addedComponentsRegistry: new AddedComponentsRegistry(),
-    exposedComponentsRegistry: new ExposedComponentsRegistry(),
-    addedLinksRegistry: new AddedLinksRegistry(),
-    addedFunctionsRegistry: new AddedFunctionsRegistry(),
+    addedComponentsRegistry: new AddedComponentsRegistry([]),
+    exposedComponentsRegistry: new ExposedComponentsRegistry([]),
+    addedLinksRegistry: new AddedLinksRegistry([]),
+    addedFunctionsRegistry: new AddedFunctionsRegistry([]),
   };
   const pagePath = page ? `/${page}` : '';
   const route = {

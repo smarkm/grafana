@@ -11,6 +11,7 @@ import (
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/infra/db"
 	ac "github.com/grafana/grafana/pkg/services/accesscontrol"
+	"github.com/grafana/grafana/pkg/services/sqlstore/migrator"
 	"github.com/grafana/grafana/pkg/services/team"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/util"
@@ -140,7 +141,7 @@ func (ss *xormStore) Delete(ctx context.Context, cmd *team.DeleteTeamCommand) er
 			return err
 		}
 
-		deletes := []string{
+		deletes := []string{ //nolint:prealloc
 			"DELETE FROM team_member WHERE org_id=? and team_id = ?",
 			"DELETE FROM team WHERE org_id=? and id = ?",
 			"DELETE FROM dashboard_acl WHERE org_id=? and team_id = ?",
@@ -214,6 +215,13 @@ func (ss *xormStore) Search(ctx context.Context, query *team.SearchTeamsQuery) (
 			sql.WriteString(` and team.id IN (?` + strings.Repeat(",?", len(query.TeamIds)-1) + ")")
 			for _, id := range query.TeamIds {
 				params = append(params, id)
+			}
+		}
+
+		if len(query.UIDs) > 0 {
+			sql.WriteString(` and team.uid IN (?` + strings.Repeat(",?", len(query.UIDs)-1) + ")")
+			for _, uid := range query.UIDs {
+				params = append(params, uid)
 			}
 		}
 
@@ -423,6 +431,7 @@ func addTeamMember(sess *db.Session, orgID, teamID, userID int64, isExternal boo
 	}
 
 	entity := team.TeamMember{
+		UID:        util.GenerateShortUID(),
 		OrgID:      orgID,
 		TeamID:     teamID,
 		UserID:     userID,
@@ -559,6 +568,7 @@ func (ss *xormStore) getTeamMembers(ctx context.Context, query *team.GetTeamMemb
 		sess.Select(fmt.Sprintf(`team_member.org_id,
 			team_member.team_id,
 			team_member.user_id,
+			team_member.uid,
 			%[1]s.email,
 			%[1]s.name,
 			%[1]s.login,
@@ -566,7 +576,7 @@ func (ss *xormStore) getTeamMembers(ctx context.Context, query *team.GetTeamMemb
 			team_member.external,
 			team_member.permission,
 			user_auth.auth_module,
-			team.uid`, ss.db.GetDialect().Quote("user")))
+			team.uid as team_uid`, ss.db.GetDialect().Quote("user")))
 		sess.Asc("user.login", "user.email")
 
 		err := sess.Find(&queryResult)
@@ -581,4 +591,26 @@ func (ss *xormStore) getTeamMembers(ctx context.Context, query *team.GetTeamMemb
 // RegisterDelete registers a delete query to be executed when the transaction is committed
 func (ss *xormStore) RegisterDelete(query string) {
 	ss.deletes = append(ss.deletes, query)
+}
+
+// teamMemberUidMigration ensures that all team members have a valid uid.
+// To protect against upgrade / downgrade we need to run this for a couple of releases.
+// FIXME: Remove this migration around Q2 2026
+func (ss *xormStore) teamMemberUidMigration() error {
+	return ss.db.WithDbSession(context.Background(), func(sess *db.Session) error {
+		switch ss.db.GetDBType() {
+		case migrator.SQLite:
+			_, err := sess.Exec("UPDATE team_member SET uid=printf('tm%09d',id) WHERE uid IS NULL OR uid = '';")
+			return err
+		case migrator.Postgres:
+			_, err := sess.Exec("UPDATE team_member SET uid='tm' || lpad('' || id::text,9,'0') WHERE uid IS NULL OR uid = '';")
+			return err
+		case migrator.MySQL:
+			_, err := sess.Exec("UPDATE team_member SET uid=concat('tm',lpad(id,9,'0')) WHERE uid IS NULL OR uid = '';")
+			return err
+		default:
+			// this branch should be unreachable
+			return nil
+		}
+	})
 }

@@ -8,30 +8,51 @@ import {
   SceneObjectUrlValues,
   VizPanel,
 } from '@grafana/scenes';
-import { Spec as DashboardV2Spec } from '@grafana/schema/dist/esm/schema/dashboard/v2';
+import { Spec as DashboardV2Spec } from '@grafana/schema/apis/dashboard.grafana.app/v2';
 
 import { dashboardEditActions, ObjectsReorderedOnCanvasEvent } from '../../edit-pane/shared';
 import { serializeTabsLayout } from '../../serialization/layoutSerializers/TabsLayoutSerializer';
+import { dashboardSceneGraph, PanelIdGenerator } from '../../utils/dashboardSceneGraph';
 import { getDashboardSceneFor } from '../../utils/utils';
+import { AutoGridLayoutManager } from '../layout-auto-grid/AutoGridLayoutManager';
+import { DefaultGridLayoutManager } from '../layout-default/DefaultGridLayoutManager';
 import { RowItem } from '../layout-rows/RowItem';
 import { RowsLayoutManager } from '../layout-rows/RowsLayoutManager';
+import { findAllGridTypes } from '../layouts-shared/findAllGridTypes';
 import { getTabFromClipboard } from '../layouts-shared/paste';
-import { generateUniqueTitle, ungroupLayout } from '../layouts-shared/utils';
+import { showConvertMixedGridsModal, showUngroupConfirmation } from '../layouts-shared/ungroupConfirmation';
+import { generateUniqueTitle, ungroupLayout, GridLayoutType, mapIdToGridLayoutType } from '../layouts-shared/utils';
+import { DashboardDropTarget } from '../types/DashboardDropTarget';
+import { isDashboardLayoutGrid } from '../types/DashboardLayoutGrid';
+import { DashboardLayoutGroup, isDashboardLayoutGroup } from '../types/DashboardLayoutGroup';
 import { DashboardLayoutManager } from '../types/DashboardLayoutManager';
+import { isLayoutParent } from '../types/LayoutParent';
 import { LayoutRegistryItem } from '../types/LayoutRegistryItem';
 
 import { TabItem } from './TabItem';
 import { TabsLayoutManagerRenderer } from './TabsLayoutManagerRenderer';
 
+type TabsPlaceholder = {
+  width: number;
+  height: number;
+  index: number;
+};
+
 interface TabsLayoutManagerState extends SceneObjectState {
   tabs: TabItem[];
-  currentTabIndex: number;
+  currentTabSlug?: string;
+  isDropTarget?: boolean;
+  placeholder?: TabsPlaceholder;
 }
 
-export class TabsLayoutManager extends SceneObjectBase<TabsLayoutManagerState> implements DashboardLayoutManager {
+export class TabsLayoutManager
+  extends SceneObjectBase<TabsLayoutManagerState>
+  implements DashboardLayoutGroup, DashboardDropTarget
+{
   public static Component = TabsLayoutManagerRenderer;
 
   public readonly isDashboardLayoutManager = true;
+  public readonly isDashboardDropTarget = true as const;
 
   public static readonly descriptor: LayoutRegistryItem = {
     get name() {
@@ -46,8 +67,8 @@ export class TabsLayoutManager extends SceneObjectBase<TabsLayoutManagerState> i
     icon: 'window',
   };
 
-  public serialize(): DashboardV2Spec['layout'] {
-    return serializeTabsLayout(this);
+  public serialize(isSnapshot?: boolean): DashboardV2Spec['layout'] {
+    return serializeTabsLayout(this, isSnapshot);
   }
 
   public readonly descriptor = TabsLayoutManager.descriptor;
@@ -58,13 +79,14 @@ export class TabsLayoutManager extends SceneObjectBase<TabsLayoutManagerState> i
     super({
       ...state,
       tabs: state.tabs ?? [new TabItem()],
-      currentTabIndex: state.currentTabIndex ?? 0,
     });
   }
 
-  public duplicate(): DashboardLayoutManager {
-    // Maybe not needed, depending on if we want nested tabs or tabs within rows
-    throw new Error('Method not implemented.');
+  // a single panel ID generator is shared across all tabs to ensure that each gets a unique range of panel IDs.
+  public duplicate(panelIdGenerator?: PanelIdGenerator): DashboardLayoutManager {
+    const gen = panelIdGenerator ?? dashboardSceneGraph.getPanelIdGenerator(this);
+    const newTabs = this.state.tabs.map((tab) => tab.duplicate(gen));
+    return this.clone({ tabs: newTabs, key: undefined });
   }
 
   public duplicateTab(tab: TabItem) {
@@ -74,7 +96,7 @@ export class TabsLayoutManager extends SceneObjectBase<TabsLayoutManagerState> i
 
   public getUrlState() {
     const key = this.getUrlKey();
-    return { [key]: this.getCurrentTab().getSlug() };
+    return { [key]: this.state.currentTabSlug };
   }
 
   public updateFromUrl(values: SceneObjectUrlValues) {
@@ -86,41 +108,65 @@ export class TabsLayoutManager extends SceneObjectBase<TabsLayoutManagerState> i
     }
 
     if (typeof values[key] === 'string') {
-      // find tab with matching slug
-      const matchIndex = this.getTabs().findIndex((tab) => tab.getSlug() === urlValue);
-      if (matchIndex !== -1) {
-        this.setState({ currentTabIndex: matchIndex });
-      }
+      this.setState({ currentTabSlug: values[key] });
     }
   }
 
   public switchToTab(tab: TabItem) {
-    this.setState({ currentTabIndex: this.getTabs().indexOf(tab) });
+    this.setState({ currentTabSlug: tab.getSlug() });
   }
 
-  public getCurrentTab(): TabItem {
-    return this.getTabs().length > this.state.currentTabIndex
-      ? this.getTabs()[this.state.currentTabIndex]
-      : this.getTabs()[0];
+  public getCurrentTab(): TabItem | undefined {
+    const tabs = this.getTabsIncludingRepeats();
+    const selectedTab = tabs.find((tab) => tab.getSlug() === this.state.currentTabSlug);
+    if (selectedTab) {
+      return selectedTab;
+    }
+
+    // return undefined either if variable is loading or repeats were not processed yet
+    for (const tab of tabs) {
+      if (tab.state.repeatByVariable) {
+        const variable = sceneGraph.lookupVariable(tab.state.repeatByVariable, this);
+        if ((variable && variable.state.loading) || !tab.state.repeatedTabs) {
+          return;
+        }
+      }
+    }
+
+    // return first tab if no hits and variables finished loading
+    return tabs[0];
   }
 
-  public getTabs(): TabItem[] {
-    const tabsWithRepeats = this.state.tabs.reduce<TabItem[]>((acc, tab) => {
+  public getTabsIncludingRepeats(): TabItem[] {
+    return this.state.tabs.reduce<TabItem[]>((acc, tab) => {
       acc.push(tab, ...(tab.state.repeatedTabs ?? []));
 
       return acc;
     }, []);
-    return tabsWithRepeats;
+  }
+
+  public setPlaceholder(placeholder: TabsPlaceholder) {
+    this.setState({ placeholder });
+  }
+
+  public setIsDropTarget(isDropTarget: boolean) {
+    this.setState({
+      isDropTarget,
+    });
   }
 
   public addPanel(vizPanel: VizPanel) {
-    this.getCurrentTab().getLayout().addPanel(vizPanel);
+    const tab = this.getCurrentTab() ?? this.state.tabs[0];
+
+    if (tab) {
+      tab.getLayout().addPanel(vizPanel);
+    }
   }
 
   public getVizPanels(): VizPanel[] {
     const panels: VizPanel[] = [];
 
-    for (const tab of this.getTabs()) {
+    for (const tab of this.state.tabs) {
       const innerPanels = tab.getLayout().getVizPanels();
       panels.push(...innerPanels);
     }
@@ -151,7 +197,7 @@ export class TabsLayoutManager extends SceneObjectBase<TabsLayoutManagerState> i
   public addNewTab(tab?: TabItem) {
     const newTab = tab ?? new TabItem({});
     const existingNames = new Set(
-      this.getTabs()
+      this.getTabsIncludingRepeats()
         .map((tab) => tab.state.title)
         .filter((title) => title !== undefined)
     );
@@ -163,16 +209,12 @@ export class TabsLayoutManager extends SceneObjectBase<TabsLayoutManagerState> i
     dashboardEditActions.addElement({
       addedObject: newTab,
       source: this,
-      perform: () => this.setState({ tabs: [...this.state.tabs, newTab], currentTabIndex: this.getTabs().length }),
+      perform: () => this.setState({ tabs: [...this.state.tabs, newTab], currentTabSlug: newTab.getSlug() }),
       undo: () => {
-        const indexOfNewTab = this.getTabs().findIndex((t) => t === newTab);
         this.setState({
           tabs: this.state.tabs.filter((t) => t !== newTab),
           // if the new tab was the current tab, set the current tab to the previous tab
-          currentTabIndex:
-            this.state.currentTabIndex === indexOfNewTab
-              ? Math.max(0, this.state.currentTabIndex - 1)
-              : this.state.currentTabIndex,
+          currentTabSlug: this.state.currentTabSlug === newTab.getSlug() ? undefined : this.state.currentTabSlug,
         });
       },
     });
@@ -191,50 +233,188 @@ export class TabsLayoutManager extends SceneObjectBase<TabsLayoutManagerState> i
   }
 
   public shouldUngroup(): boolean {
-    return this.getTabs().length === 1;
+    return this.state.tabs.length === 1;
   }
 
-  public removeTab(tabToRemove: TabItem) {
-    // When removing last tab replace ourselves with the inner tab layout
-    if (this.shouldUngroup()) {
-      ungroupLayout(this, tabToRemove.state.layout);
-      return;
+  public convertAllGridLayouts(gridLayoutType: GridLayoutType) {
+    for (const tab of this.state.tabs) {
+      switch (gridLayoutType) {
+        case GridLayoutType.AutoGridLayout:
+          if (!(tab.getLayout() instanceof AutoGridLayoutManager)) {
+            tab.switchLayout(AutoGridLayoutManager.createFromLayout(tab.getLayout()));
+          }
+          break;
+        case GridLayoutType.GridLayout:
+          if (!(tab.getLayout() instanceof DefaultGridLayoutManager)) {
+            tab.switchLayout(DefaultGridLayoutManager.createFromLayout(tab.getLayout()));
+          }
+          break;
+      }
+    }
+  }
+
+  public ungroupTabs() {
+    const hasNonGridLayout = this.state.tabs.some((tab) => !tab.getLayout().descriptor.isGridLayout);
+    const gridTypes = new Set(findAllGridTypes(this));
+
+    showUngroupConfirmation({
+      hasNonGridLayout,
+      gridTypes,
+      onConfirm: (gridLayoutType) => {
+        this.wrapUngroupTabsInEdit(gridLayoutType);
+      },
+      onConvertMixedGrids: (availableIds) => {
+        this._confirmConvertMixedGrids(availableIds);
+      },
+    });
+  }
+
+  /**
+   * Calculates the correct index to insert a tab when dragging within the same TabsLayoutManager, accounting for repeated tabs.
+   * @param {number } insertIndexInRepeatedTabs - the index where the tab would be inserted if repeated tabs were included as separate entries
+   */
+  public mapTabInsertIndex(insertIndexInRepeatedTabs: number): number {
+    const { tabs } = this.state;
+    const insertAt = Math.max(0, insertIndexInRepeatedTabs);
+    let groupStart = 0;
+
+    for (let tabIndex = 0; tabIndex < tabs.length; tabIndex++) {
+      const groupSize = 1 + (tabs[tabIndex].state.repeatedTabs?.length ?? 0);
+      const groupEnd = groupStart + groupSize;
+
+      if (insertAt <= groupStart) {
+        return tabIndex;
+      }
+
+      if (insertAt < groupEnd) {
+        return tabIndex + 1;
+      }
+
+      groupStart = groupEnd;
     }
 
-    const currentTab = this.getCurrentTab();
+    return tabs.length;
+  }
 
-    if (currentTab === tabToRemove) {
-      const currentTabIndex = this.state.currentTabIndex;
-      const indexOfTabToRemove = this.state.tabs.findIndex((t) => t === tabToRemove);
-      const nextTabIndex = currentTabIndex > 0 ? currentTabIndex - 1 : 0;
+  private _confirmConvertMixedGrids(availableIds: Set<string>) {
+    showConvertMixedGridsModal(availableIds, (id: string) => {
+      const selected = mapIdToGridLayoutType(id);
+      if (selected) {
+        this.wrapUngroupTabsInEdit(selected);
+      }
+    });
+  }
 
+  private wrapUngroupTabsInEdit(gridLayoutType: GridLayoutType) {
+    const parent = this.parent;
+    if (!parent || !isLayoutParent(parent)) {
+      throw new Error('Ungroup tabs failed: parent is not a layout container');
+    }
+
+    const previousLayout = this.clone({});
+    const scene = getDashboardSceneFor(this);
+
+    dashboardEditActions.edit({
+      description: t('dashboard.tabs-layout.edit.ungroup-tabs', 'Ungroup tabs'),
+      source: scene,
+      perform: () => {
+        this.ungroup(gridLayoutType);
+      },
+      undo: () => {
+        parent.switchLayout(previousLayout);
+      },
+    });
+  }
+
+  public ungroup(gridLayoutType: GridLayoutType) {
+    const hasNonGridLayout = this.state.tabs.some((tab) => !tab.getLayout().descriptor.isGridLayout);
+
+    if (hasNonGridLayout) {
+      for (const tab of this.state.tabs) {
+        const layout = tab.getLayout();
+        if (!layout.descriptor.isGridLayout) {
+          if (isDashboardLayoutGroup(layout)) {
+            layout.ungroup(gridLayoutType);
+          } else {
+            throw new Error(`Ungrouping not supported for layout type: ${layout.descriptor.name}`);
+          }
+        }
+      }
+    }
+
+    this.convertAllGridLayouts(gridLayoutType);
+
+    const firstTab = this.state.tabs[0];
+    const firstTabLayout = firstTab.getLayout();
+    const otherTabs = this.state.tabs.slice(1);
+
+    for (const tab of otherTabs) {
+      const layout = tab.getLayout();
+      if (isDashboardLayoutGrid(firstTabLayout) && isDashboardLayoutGrid(layout)) {
+        firstTabLayout.mergeGrid(layout);
+      } else {
+        throw new Error(`Layout type ${firstTabLayout.descriptor.name} does not support merging`);
+      }
+    }
+
+    this.setState({ tabs: [firstTab] });
+    ungroupLayout(this, firstTab.state.layout, true);
+  }
+
+  public removeTab(tab: TabItem, skipUndo?: boolean) {
+    const tabsBeforeRemoval = [...this.state.tabs];
+    let tabIndex = 0;
+    const tabsAfterRemoval = tabsBeforeRemoval.filter((r, i) => {
+      if (r !== tab) {
+        return true;
+      }
+      tabIndex = i;
+      return false;
+    });
+    const parent = this.parent!;
+    if (!isLayoutParent(parent)) {
+      throw new Error('Parent object is not a LayoutParent');
+    }
+
+    const perform = () => {
+      if (!tabsAfterRemoval.length) {
+        parent.switchLayout(AutoGridLayoutManager.createEmpty());
+      } else {
+        const newCurrentTabIndex = tabIndex > 0 ? tabIndex - 1 : 0;
+        this.setState({
+          tabs: tabsAfterRemoval,
+          currentTabSlug: tabsAfterRemoval[newCurrentTabIndex]?.getSlug(),
+        });
+      }
+    };
+
+    const thisLayout = this;
+    const undo = () => {
+      if (!tabsAfterRemoval.length) {
+        parent.switchLayout(thisLayout);
+      } else {
+        this.setState({
+          tabs: tabsBeforeRemoval,
+          currentTabSlug: tab.getSlug(),
+        });
+      }
+    };
+
+    if (skipUndo) {
+      perform();
+    } else {
       dashboardEditActions.removeElement({
-        removedObject: tabToRemove,
+        removedObject: tab,
         source: this,
-        perform: () =>
-          this.setState({
-            tabs: this.state.tabs.filter((t) => t !== tabToRemove),
-            currentTabIndex: currentTabIndex === indexOfTabToRemove ? nextTabIndex : currentTabIndex,
-          }),
-        undo: () => {
-          const tabs = [...this.state.tabs];
-          tabs.splice(indexOfTabToRemove, 0, tabToRemove);
-          this.setState({ tabs, currentTabIndex });
-        },
+        perform,
+        undo,
       });
-
-      return;
     }
-
-    const filteredTab = this.state.tabs.filter((tab) => tab !== tabToRemove);
-    const tabs = filteredTab.length === 0 ? [new TabItem()] : filteredTab;
-
-    this.setState({ tabs, currentTabIndex: 0 });
   }
 
   public moveTab(fromIndex: number, toIndex: number) {
     // fromIndex and toIndex include repeated tab so we need to find original indexes
-    const allTabs = this.getTabs();
+    const allTabs = this.getTabsIncludingRepeats();
     const objectToMove = allTabs[fromIndex];
     let destinationTab = allTabs[toIndex];
     let selectionIndex = toIndex;
@@ -274,13 +454,13 @@ export class TabsLayoutManager extends SceneObjectBase<TabsLayoutManagerState> i
     const tabs = [...this.state.tabs];
     const [removed] = tabs.splice(fromIndex, 1);
     tabs.splice(toIndex, 0, removed);
-    this.setState({ tabs, currentTabIndex: selectedTabIndex });
+    this.setState({ tabs });
     this.publishEvent(new ObjectsReorderedOnCanvasEvent(this), true);
   }
 
   public forceSelectTab(tabKey: string) {
-    const tabIndex = this.getTabs().findIndex((tab) => tab.state.key === tabKey);
-    const tab = this.getTabs()[tabIndex];
+    const tabIndex = this.getTabsIncludingRepeats().findIndex((tab) => tab.state.key === tabKey);
+    const tab = this.getTabsIncludingRepeats()[tabIndex];
 
     if (!tab) {
       return;
@@ -288,7 +468,7 @@ export class TabsLayoutManager extends SceneObjectBase<TabsLayoutManagerState> i
 
     const editPane = getDashboardSceneFor(this).state.editPane;
     editPane.selectObject(tab!, tabKey, { force: true, multi: false });
-    this.setState({ currentTabIndex: tabIndex });
+    this.setState({ currentTabSlug: tab.getSlug() });
   }
 
   public static createEmpty(): TabsLayoutManager {
@@ -300,6 +480,10 @@ export class TabsLayoutManager extends SceneObjectBase<TabsLayoutManagerState> i
     let tabs: TabItem[] = [];
 
     if (layout instanceof RowsLayoutManager) {
+      const existingNames = new Set(
+        layout.state.rows.map((row) => row.state.title).filter((title): title is string => !!title)
+      );
+
       for (const row of layout.state.rows) {
         if (row.state.repeatSourceKey) {
           continue;
@@ -307,13 +491,20 @@ export class TabsLayoutManager extends SceneObjectBase<TabsLayoutManagerState> i
 
         const conditionalRendering = row.state.conditionalRendering;
         conditionalRendering?.clearParent();
+        // We need to clear the target since we don't want to point the original row anymore (if it was set)
+        conditionalRendering?.setTarget(undefined);
+
+        const newTitle =
+          row.state.title || generateUniqueTitle(t('dashboard.tabs-layout.tab.new', 'New tab'), existingNames);
+        existingNames.add(newTitle);
 
         tabs.push(
           new TabItem({
             layout: row.state.layout.clone(),
-            title: row.state.title,
+            title: newTitle,
             conditionalRendering,
             repeatByVariable: row.state.repeatByVariable,
+            $variables: row.state.$variables,
           })
         );
       }
@@ -349,7 +540,7 @@ export class TabsLayoutManager extends SceneObjectBase<TabsLayoutManagerState> i
     const titleCounts = new Map<string | undefined, number>();
     const duplicateTitles = new Set<string | undefined>();
 
-    this.getTabs().forEach((tab) => {
+    this.getTabsIncludingRepeats().forEach((tab) => {
       const title = sceneGraph.interpolate(tab, tab.state.title);
       const count = (titleCounts.get(title) ?? 0) + 1;
       titleCounts.set(title, count);

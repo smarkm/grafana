@@ -52,15 +52,15 @@ import (
 	"github.com/grafana/grafana/pkg/services/user/userimpl"
 	"github.com/grafana/grafana/pkg/services/user/usertest"
 	"github.com/grafana/grafana/pkg/setting"
+	"github.com/grafana/grafana/pkg/util/testutil"
 	"github.com/grafana/grafana/pkg/web/webtest"
 )
 
 const newEmail = "newemail@localhost"
 
 func TestIntegrationUserAPIEndpoint_userLoggedIn(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	settings := setting.NewCfg()
 	sqlStore := db.InitTestDB(t, sqlstore.InitTestDBOpt{Cfg: settings})
 	hs := &HTTPServer{
@@ -82,7 +82,8 @@ func TestIntegrationUserAPIEndpoint_userLoggedIn(t *testing.T) {
 	loggedInUserScenario(t, "When calling GET on", "api/users/1", "api/users/:id", func(sc *scenarioContext) {
 		fakeNow := time.Date(2019, 2, 11, 17, 30, 40, 0, time.UTC)
 		secretsService := secretsManager.SetupTestService(t, database.ProvideSecretsStore(sqlStore))
-		authInfoStore := authinfoimpl.ProvideStore(sqlStore, secretsService)
+		authInfoStore, err := authinfoimpl.ProvideStore(sqlStore, secretsService)
+		require.NoError(t, err)
 		srv := authinfoimpl.ProvideService(
 			authInfoStore, remotecache.NewFakeCacheStorage(), secretsService)
 		hs.authInfoService = srv
@@ -90,7 +91,7 @@ func TestIntegrationUserAPIEndpoint_userLoggedIn(t *testing.T) {
 		require.NoError(t, err)
 		userSvc, err := userimpl.ProvideService(
 			sqlStore, orgSvc, sc.cfg, nil, nil, tracing.InitializeTracerForTest(),
-			quotatest.New(false, nil), supportbundlestest.NewFakeBundleService(),
+			quotatest.New(false, nil), supportbundlestest.NewFakeBundleService(), nil,
 		)
 		require.NoError(t, err)
 		hs.userService = userSvc
@@ -165,7 +166,7 @@ func TestIntegrationUserAPIEndpoint_userLoggedIn(t *testing.T) {
 		require.NoError(t, err)
 		userSvc, err := userimpl.ProvideService(
 			sqlStore, orgSvc, sc.cfg, nil, nil, tracing.InitializeTracerForTest(),
-			quotatest.New(false, nil), supportbundlestest.NewFakeBundleService(),
+			quotatest.New(false, nil), supportbundlestest.NewFakeBundleService(), nil,
 		)
 		require.NoError(t, err)
 		_, err = userSvc.Create(context.Background(), &createUserCmd)
@@ -183,6 +184,44 @@ func TestIntegrationUserAPIEndpoint_userLoggedIn(t *testing.T) {
 		require.Equal(t, http.StatusOK, sc.resp.Code)
 		err = json.Unmarshal(sc.resp.Body.Bytes(), &resp)
 		require.NoError(t, err)
+	}, mock)
+
+	// Multiple historical auth labels should appear ordered by recency
+	loggedInUserScenario(t, "When calling GET returns with multiple auth labels", "/api/users/lookup", "/api/users/lookup", func(sc *scenarioContext) {
+		createUserCmd := user.CreateUserCommand{
+			Email:   fmt.Sprint("multi", "@test.com"),
+			Name:    "multi",
+			Login:   "multi",
+			IsAdmin: true,
+		}
+		orgSvc, err := orgimpl.ProvideService(sqlStore, sc.cfg, quotatest.New(false, nil))
+		require.NoError(t, err)
+		userSvc, err := userimpl.ProvideService(
+			sqlStore, orgSvc, sc.cfg, nil, nil, tracing.InitializeTracerForTest(),
+			quotatest.New(false, nil), supportbundlestest.NewFakeBundleService(), nil,
+		)
+		require.NoError(t, err)
+		usr, err := userSvc.Create(context.Background(), &createUserCmd)
+		require.Nil(t, err)
+
+		sc.handlerFunc = hs.GetUserByLoginOrEmail
+
+		userMock := usertest.NewUserServiceFake()
+		userMock.ExpectedUser = &user.User{ID: usr.ID, Email: usr.Email, Login: usr.Login, Name: usr.Name}
+		sc.userService = userMock
+		hs.userService = userMock
+
+		fakeAuth := &authinfotest.FakeService{ExpectedAuthModuleLabels: []string{login.GetAuthProviderLabel(login.OktaAuthModule), login.GetAuthProviderLabel(login.LDAPAuthModule), login.GetAuthProviderLabel(login.SAMLAuthModule)}}
+		hs.authInfoService = fakeAuth
+
+		sc.fakeReqWithParams("GET", sc.url, map[string]string{"loginOrEmail": usr.Email}).exec()
+
+		var resp user.UserProfileDTO
+		require.Equal(t, http.StatusOK, sc.resp.Code)
+		err = json.Unmarshal(sc.resp.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		expected := []string{login.GetAuthProviderLabel(login.OktaAuthModule), login.GetAuthProviderLabel(login.LDAPAuthModule), login.GetAuthProviderLabel(login.SAMLAuthModule)}
+		require.Equal(t, expected, resp.AuthLabels)
 	}, mock)
 
 	loggedInUserScenario(t, "When calling GET on", "/api/users", "/api/users", func(sc *scenarioContext) {
@@ -408,9 +447,8 @@ func Test_GetUserByID(t *testing.T) {
 }
 
 func TestIntegrationHTTPServer_UpdateUser(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	settings := setting.NewCfg()
 	sqlStore := db.InitTestDB(t)
 
@@ -455,7 +493,7 @@ func setupUpdateEmailTests(t *testing.T, cfg *setting.Cfg) (*user.User, *HTTPSer
 	require.NoError(t, err)
 	userSvc, err := userimpl.ProvideService(
 		sqlStore, orgSvc, cfg, nil, nil, tracing.InitializeTracerForTest(),
-		quotatest.New(false, nil), supportbundlestest.NewFakeBundleService(),
+		quotatest.New(false, nil), supportbundlestest.NewFakeBundleService(), nil,
 	)
 	require.NoError(t, err)
 
@@ -485,9 +523,8 @@ func setupUpdateEmailTests(t *testing.T, cfg *setting.Cfg) (*user.User, *HTTPSer
 }
 
 func TestIntegrationUser_UpdateEmail(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	cases := []struct {
 		Name  string
 		Field user.UpdateEmailActionType
@@ -687,7 +724,7 @@ func TestIntegrationUser_UpdateEmail(t *testing.T) {
 		require.NoError(t, err)
 		userSvc, err := userimpl.ProvideService(
 			sqlStore, orgSvc, settings, nil, nil, tracing.InitializeTracerForTest(),
-			quotatest.New(false, nil), supportbundlestest.NewFakeBundleService(),
+			quotatest.New(false, nil), supportbundlestest.NewFakeBundleService(), nil,
 		)
 		require.NoError(t, err)
 
@@ -1163,9 +1200,8 @@ func updateUserScenario(t *testing.T, ctx updateUserContext, hs *HTTPServer) {
 }
 
 func TestIntegrationHTTPServer_UpdateSignedInUser(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	settings := setting.NewCfg()
 	sqlStore := db.InitTestDB(t)
 

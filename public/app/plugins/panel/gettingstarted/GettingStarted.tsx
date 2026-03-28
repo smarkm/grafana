@@ -6,8 +6,8 @@ import { PanelProps } from '@grafana/data';
 import { Trans, t } from '@grafana/i18n';
 import { config, reportInteraction } from '@grafana/runtime';
 import { Button, Spinner, stylesFactory } from '@grafana/ui';
-import { contextSrv } from 'app/core/core';
 import { backendSrv } from 'app/core/services/backend_srv';
+import { contextSrv } from 'app/core/services/context_srv';
 import { getDashboardSrv } from 'app/features/dashboard/services/DashboardSrv';
 
 import { Step } from './components/Step';
@@ -99,7 +99,7 @@ export class GettingStarted extends PureComponent<PanelProps, State> {
           </div>
         ) : (
           <>
-            <Button variant="secondary" fill="text" className={styles.dismiss} onClick={this.dismiss}>
+            <Button size="sm" fill="text" className={styles.dismiss} onClick={this.dismiss}>
               <Trans i18nKey="gettingstarted.getting-started.remove-this-panel">Remove this panel</Trans>
             </Button>
             {currentStep === steps.length - 1 && (
@@ -202,7 +202,6 @@ const getStyles = stylesFactory(() => {
     }),
     dismiss: css({
       alignSelf: 'flex-end',
-      textDecoration: 'underline',
       marginBottom: theme.spacing(1),
     }),
     loading: css({

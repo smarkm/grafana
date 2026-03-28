@@ -28,12 +28,11 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { AppEvents, DataQueryErrorType, deprecationWarning } from '@grafana/data';
 import { BackendSrv as BackendService, BackendSrvRequest, config, FetchError, FetchResponse } from '@grafana/runtime';
-import appEvents from 'app/core/app_events';
+import { appEvents } from 'app/core/app_events';
 import { getConfig } from 'app/core/config';
 import { getSessionExpiry, hasSessionExpiry } from 'app/core/utils/auth';
 import { loadUrlToken } from 'app/core/utils/urlToken';
 import { getDashboardAPI } from 'app/features/dashboard/api/dashboard_api';
-import { DashboardModel } from 'app/features/dashboard/state/DashboardModel';
 import { DashboardSearchItem } from 'app/features/search/types';
 import { TokenRevokedModal } from 'app/features/users/TokenRevokedModal';
 import { DashboardDTO } from 'app/types/dashboard';
@@ -173,7 +172,6 @@ export class BackendSrv implements BackendService {
         .subscribe(this.getChunkedResponseObserver({ controller, observer, options, requestId }));
 
       return function unsubscribe() {
-        console.log(requestId, 'unsubscribe');
         controller.abort('unsubscribe');
         sub.unsubscribe();
       };
@@ -218,7 +216,6 @@ export class BackendSrv implements BackendService {
         // Setup onabort callback so that we can cancel the reader properly
         controller.signal.onabort = () => {
           reader.cancel(controller.signal.reason);
-          console.log(requestId, 'signal.aborted');
         };
 
         async function process() {
@@ -230,13 +227,11 @@ export class BackendSrv implements BackendService {
             });
             if (chunk.done) {
               done = true;
-              console.log(requestId, 'done');
             }
           }
         }
         process()
           .then(() => {
-            console.log(requestId, 'complete');
             observer.complete();
           }) // runs in background
           .catch((e) => {
@@ -436,8 +431,9 @@ export class BackendSrv implements BackendService {
     err.data = err.data ?? { message: 'Unexpected error' };
 
     if (typeof err.data === 'string') {
+      const message = isHtmlResponse(err.data) ? `${err.status} ${err.statusText ?? 'Error'}` : err.data;
       err.data = {
-        message: err.data,
+        message,
         error: err.statusText,
         response: err.data,
       };
@@ -637,24 +633,19 @@ export class BackendSrv implements BackendService {
     // NOTE: When this is removed, we can also remove most instances of:
     // jest.mock('app/features/live/dashboard/dashboardWatcher
     deprecationWarning('backend_srv', 'getDashboardByUid(uid)', 'getDashboardAPI().getDashboardDTO(uid)');
-    return getDashboardAPI('v1').getDashboardDTO(uid);
-  }
-
-  validateDashboard(dashboard: DashboardModel): Promise<ValidateDashboardResponse> {
-    // support for this function will be implemented in the k8s flavored api-server
-    // hidden by experimental feature flag:
-    //  config.featureToggles.showDashboardValidationWarnings
-    return Promise.resolve({
-      isValid: false,
-      message: 'dashboard validation is not supported',
-    });
+    return getDashboardAPI('v1').then((api) => api.getDashboardDTO(uid));
   }
 
   getPublicDashboardByUid(uid: string) {
     return this.get<DashboardDTO>(`/api/public/dashboards/${uid}`);
   }
 
+  /**
+   * @deprecated Use getFolderByUidFacade from app/api/clients/folder/v1beta1/hooks instead
+   * or manually handle calling legacy vs app platform API based on feature toggles
+   */
   getFolderByUid(uid: string, options: FolderRequestOptions = {}) {
+    deprecationWarning('backend_srv', 'getFolderByUid(uid)', 'getFolderByUidFacade(uid)');
     const queryParams = new URLSearchParams();
     if (options.withAccessControl) {
       queryParams.set('accesscontrol', 'true');
@@ -666,11 +657,11 @@ export class BackendSrv implements BackendService {
   }
 }
 
+function isHtmlResponse(value: string): boolean {
+  const trimmed = value.trimStart().toLowerCase();
+  return trimmed.startsWith('<!doctype') || trimmed.startsWith('<html');
+}
+
 // Used for testing and things that really need BackendSrv
 export const backendSrv = new BackendSrv();
 export const getBackendSrv = (): BackendSrv => backendSrv;
-
-interface ValidateDashboardResponse {
-  isValid: boolean;
-  message?: string;
-}

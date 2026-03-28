@@ -12,6 +12,14 @@ import (
 
 // HistoricJobApplyConfiguration represents a declarative configuration of the HistoricJob type for use
 // with apply.
+//
+// HistoricJob is an append only log, saving all jobs that have been processed.
+//
+// NOTE: This should not be used directly by any external consumer.
+// When there is a more stable integration with loki (an appropriate append only store)
+// this may be removed without notice.
+//
+// The repository name and type are stored as labels.
 type HistoricJobApplyConfiguration struct {
 	v1.TypeMetaApplyConfiguration    `json:",inline"`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
@@ -29,6 +37,8 @@ func HistoricJob(name, namespace string) *HistoricJobApplyConfiguration {
 	b.WithAPIVersion("provisioning.grafana.app/v0alpha1")
 	return b
 }
+
+func (b HistoricJobApplyConfiguration) IsApplyConfiguration() {}
 
 // WithKind sets the Kind field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
@@ -204,8 +214,24 @@ func (b *HistoricJobApplyConfiguration) WithStatus(value *JobStatusApplyConfigur
 	return b
 }
 
+// GetKind retrieves the value of the Kind field in the declarative configuration.
+func (b *HistoricJobApplyConfiguration) GetKind() *string {
+	return b.TypeMetaApplyConfiguration.Kind
+}
+
+// GetAPIVersion retrieves the value of the APIVersion field in the declarative configuration.
+func (b *HistoricJobApplyConfiguration) GetAPIVersion() *string {
+	return b.TypeMetaApplyConfiguration.APIVersion
+}
+
 // GetName retrieves the value of the Name field in the declarative configuration.
 func (b *HistoricJobApplyConfiguration) GetName() *string {
 	b.ensureObjectMetaApplyConfigurationExists()
 	return b.ObjectMetaApplyConfiguration.Name
+}
+
+// GetNamespace retrieves the value of the Namespace field in the declarative configuration.
+func (b *HistoricJobApplyConfiguration) GetNamespace() *string {
+	b.ensureObjectMetaApplyConfigurationExists()
+	return b.ObjectMetaApplyConfiguration.Namespace
 }

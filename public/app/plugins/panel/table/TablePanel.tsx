@@ -18,16 +18,30 @@ import { Select, usePanelContext, useTheme2 } from '@grafana/ui';
 import { TableSortByFieldState } from '@grafana/ui/internal';
 import { TableNG } from '@grafana/ui/unstable';
 import { getConfig } from 'app/core/config';
-
-import { getActions } from '../../../features/actions/utils';
+import { getActions } from 'app/features/actions/utils';
 
 import { hasDeprecatedParentRowIndex, migrateFromParentRowIndexToNestedFrames } from './migrations';
 import { Options } from './panelcfg.gen';
 
-interface Props extends PanelProps<Options> {}
+interface Props extends PanelProps<Options> {
+  initialRowIndex?: number;
+  sortByBehavior?: 'initial' | 'managed';
+}
 
 export function TablePanel(props: Props) {
-  const { data, height, width, options, fieldConfig, id, timeRange, replaceVariables, transparent } = props;
+  const {
+    data,
+    height,
+    width,
+    options,
+    fieldConfig,
+    id,
+    timeRange,
+    replaceVariables,
+    transparent,
+    initialRowIndex,
+    sortByBehavior = 'initial',
+  } = props;
 
   useMemo(() => {
     cacheFieldDisplayNames(data.series);
@@ -35,9 +49,11 @@ export function TablePanel(props: Props) {
 
   const theme = useTheme2();
   const panelContext = usePanelContext();
+  const userCanExecuteActions = useMemo(() => panelContext.canExecuteActions?.() ?? false, [panelContext]);
   const _getActions = useCallback(
-    (frame: DataFrame, field: Field, rowIndex: number) => getCellActions(frame, field, rowIndex, replaceVariables),
-    [replaceVariables]
+    (frame: DataFrame, field: Field, rowIndex: number) =>
+      userCanExecuteActions ? getCellActions(frame, field, rowIndex, replaceVariables) : [],
+    [replaceVariables, userCanExecuteActions]
   );
   const frames = hasDeprecatedParentRowIndex(data.series)
     ? migrateFromParentRowIndexToNestedFrames(data.series)
@@ -66,19 +82,21 @@ export function TablePanel(props: Props) {
 
   const tableElement = (
     <TableNG
+      initialRowIndex={initialRowIndex}
       height={tableHeight}
       width={width}
       data={main}
       noHeader={!options.showHeader}
+      noValue={fieldConfig.defaults.noValue}
       showTypeIcons={options.showTypeIcons}
       resizable={true}
-      initialSortBy={options.sortBy}
+      sortByBehavior={sortByBehavior}
+      sortBy={options.sortBy}
       onSortByChange={(sortBy) => onSortByChange(sortBy, props)}
       onColumnResize={(displayName, resizedWidth) => onColumnResize(displayName, resizedWidth, props)}
       onCellFilterAdded={panelContext.onAddAdHocFilter}
-      footerOptions={options.footer}
       frozenColumns={options.frozenColumns?.left}
-      enablePagination={options.footer?.enablePagination}
+      enablePagination={options.enablePagination}
       cellHeight={options.cellHeight}
       maxRowHeight={options.maxRowHeight}
       timeRange={timeRange}
@@ -88,6 +106,7 @@ export function TablePanel(props: Props) {
       structureRev={data.structureRev}
       transparent={transparent}
       disableSanitizeHtml={disableSanitizeHtml}
+      disableKeyboardEvents={options.disableKeyboardEvents}
     />
   );
 
@@ -106,7 +125,12 @@ export function TablePanel(props: Props) {
     <div className={tableStyles.wrapper}>
       {tableElement}
       <div className={tableStyles.selectWrapper}>
-        <Select options={names} value={names[currentIndex]} onChange={(val) => onChangeTableSelection(val, props)} />
+        <Select
+          tabIndex={options.disableKeyboardEvents ? -1 : 0}
+          options={names}
+          value={names[currentIndex]}
+          onChange={(val) => onChangeTableSelection(val, props)}
+        />
       </div>
     </div>
   );
@@ -179,7 +203,8 @@ const getCellActions = (
       field.state!.scopedVars!,
       replaceVariables ?? replaceVars,
       field.config.actions ?? [],
-      { valueRowIndex: rowIndex }
+      { valueRowIndex: rowIndex },
+      'table'
     );
 
     if (actions.length === 1) {

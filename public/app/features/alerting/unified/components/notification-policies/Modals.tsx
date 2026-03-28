@@ -1,5 +1,5 @@
 import { groupBy } from 'lodash';
-import { FC, useCallback, useMemo, useState } from 'react';
+import { FC, type JSX, useCallback, useMemo, useState } from 'react';
 
 import { Trans, t } from '@grafana/i18n';
 import { Button, Icon, Modal, ModalProps, Spinner, Stack } from '@grafana/ui';
@@ -52,10 +52,7 @@ const useAddPolicyModal = (
           onDismiss={handleDismiss}
           closeOnBackdropClick={true}
           closeOnEscape={true}
-          title={t(
-            'alerting.use-add-policy-modal.modal-element.title-add-notification-policy',
-            'Add notification policy'
-          )}
+          title={t('alerting.use-add-policy-modal.modal-element.title-add-route', 'Add route')}
         >
           {error && <NotificationPoliciesErrorAlert error={error} />}
           <AmRoutesExpandedForm
@@ -73,7 +70,7 @@ const useAddPolicyModal = (
                   <Trans i18nKey="alerting.common.cancel">Cancel</Trans>
                 </Button>
                 <Button type="submit">
-                  <Trans i18nKey="alerting.policies.save-policy">Save policy</Trans>
+                  <Trans i18nKey="alerting.policies.add-route">Add route</Trans>
                 </Button>
               </Modal.ButtonRow>
             }
@@ -119,10 +116,7 @@ const useEditPolicyModal = (
           onDismiss={handleDismiss}
           closeOnBackdropClick={true}
           closeOnEscape={true}
-          title={t(
-            'alerting.use-edit-policy-modal.modal-element.title-edit-notification-policy',
-            'Edit notification policy'
-          )}
+          title={t('alerting.use-edit-policy-modal.modal-element.title-edit-route', 'Edit route')}
         >
           {error && <NotificationPoliciesErrorAlert error={error} />}
           {isDefaultPolicy && route && (
@@ -138,7 +132,7 @@ const useEditPolicyModal = (
                     <Trans i18nKey="alerting.common.cancel">Cancel</Trans>
                   </Button>
                   <Button type="submit">
-                    <Trans i18nKey="alerting.policies.default-policy.update">Update default policy</Trans>
+                    <Trans i18nKey="alerting.policies.default-policy.update">Update policy</Trans>
                   </Button>
                 </Modal.ButtonRow>
               }
@@ -154,7 +148,7 @@ const useEditPolicyModal = (
                     <Trans i18nKey="alerting.common.cancel">Cancel</Trans>
                   </Button>
                   <Button type="submit">
-                    <Trans i18nKey="alerting.policies.update.update-policy">Update policy</Trans>
+                    <Trans i18nKey="alerting.policies.update.update-route">Update route</Trans>
                   </Button>
                 </Modal.ButtonRow>
               }
@@ -263,6 +257,7 @@ const useAlertGroupsModal = (
         onDismiss={handleDismiss}
         closeOnBackdropClick={true}
         closeOnEscape={true}
+        ariaLabel={t('alerting.policies.matchers', 'Matchers')}
         title={
           <Stack direction="row" alignItems="center" gap={1} wrap={'wrap'}>
             <Stack direction="row" alignItems="center" gap={0.5}>
@@ -297,12 +292,13 @@ const useAlertGroupsModal = (
   return [modalElement, handleShow, handleDismiss];
 };
 
-const UpdatingModal: FC<Pick<ModalProps, 'isOpen'>> = ({ isOpen }) => (
+export const UpdatingModal: FC<Pick<ModalProps, 'isOpen' | 'onDismiss'>> = ({ isOpen, onDismiss = () => {} }) => (
   <Modal
     isOpen={isOpen}
-    onDismiss={() => {}}
+    onDismiss={onDismiss}
     closeOnBackdropClick={false}
     closeOnEscape={false}
+    ariaLabel={t('alerting.policies.update.updating', 'Updating...')}
     title={
       <Stack direction="row" alignItems="center" gap={0.5}>
         <Trans i18nKey="alerting.policies.update.updating">Updating...</Trans> <Spinner inline />

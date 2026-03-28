@@ -20,6 +20,58 @@ To improve the consistency across Grafana we encourage devs to use tokens instea
 
 Instead of using `0` to remove a previously set border-radius, use `unset`.
 
+### `no-invalid-css-properties`
+
+Disallow invalid CSS property names in Emotion `css()` calls.
+
+This rule catches typos and invalid CSS properties in Emotion's `css()` function calls, helping prevent bugs where styles are silently ignored by browsers. It uses the [`known-css-properties`](https://www.npmjs.com/package/known-css-properties) package (the same one used by Stylelint) to validate property names against all standard CSS properties.
+
+The rule automatically converts camelCase property names to kebab-case for validation and allows:
+
+- Valid CSS properties (e.g., `paddingLeft`, `backgroundColor`)
+- CSS custom properties/variables (e.g., `--my-custom-property`)
+- Nested selectors and pseudo-classes (e.g., `&:hover`, `& > div`)
+- At-rules (e.g., `@media`, `@supports`)
+- HTML tag selectors (e.g., `button`, `span`)
+
+#### Examples
+
+```tsx
+// Bad ❌ - Typo in property name
+const styles = css({
+  addingLeft: 10, // Should be "paddingLeft"
+  backgroudColor: 'red', // Should be "backgroundColor"
+});
+
+// Good ✅ - Valid CSS properties
+const styles = css({
+  paddingLeft: 10,
+  backgroundColor: 'red',
+});
+
+// Good ✅ - CSS custom properties
+const styles = css({
+  '--my-custom-property': '10px',
+});
+
+// Good ✅ - Nested selectors and pseudo-classes
+const styles = css({
+  '&:hover': {
+    backgroundColor: 'blue',
+  },
+  '& > span': {
+    color: 'red',
+  },
+});
+
+// Good ✅ - Media queries
+const styles = css({
+  '@media (max-width: 768px)': {
+    display: 'none',
+  },
+});
+```
+
 ### `no-unreduced-motion`
 
 Avoid direct use of `animation*` or `transition*` properties.
@@ -139,4 +191,45 @@ export default storyConfig;
 // Bad ❌ - Variable assignment with too many sections
 const storyConfig = { title: 'Components/Forms/Button' };
 export default storyConfig;
+```
+
+### `no-plugin-external-import-paths`
+
+Prevent plugins from importing anything outside their own directory.
+
+This rule enforces strict plugin isolation by preventing plugins from importing anything that reaches outside their own plugin directory. This helps maintain clean plugin boundaries and prevents tight coupling between plugins and other parts of the codebase.
+
+The rule automatically detects the current plugin directory from the file path and blocks any relative imports that would reach outside that directory.
+
+The rule is applied to specific plugins by configuring the `files` pattern in the ESLint configuration, similar to `grafana/decoupled-plugins-overrides`.
+
+#### Examples
+
+```tsx
+// Bad ❌ - Importing from sibling plugin
+import { getDataLinks } from '../status-history/utils';
+import { isTooltipScrollable } from '../timeseries/utils';
+
+// Bad ❌ - Importing from Grafana core
+import { something } from '../../../features/dashboard/state';
+
+// Bad ❌ - Importing from outside plugin directory
+import { other } from '../some-other-folder/utils';
+
+// Good ✅ - Importing from same plugin
+import { someUtil } from './utils';
+import { Component } from './Component';
+import { helper } from './subfolder/helper';
+
+// Good ✅ - Importing from external packages
+import React from 'react';
+import { Button } from '@grafana/ui';
+```
+
+#### Error Message
+
+When a violation is detected, the rule reports:
+
+```
+Import '../status-history/utils' reaches outside the 'histogram' plugin directory. Plugins should only import from external dependencies or relative paths within their own directory.
 ```

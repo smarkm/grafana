@@ -11,8 +11,8 @@ manifest: {
 			}
 			kinds: [
 				preferencesV1alpha1,
-				starsV1alpha1,
 			]
 		}
 	}
+	roles: {}
 }

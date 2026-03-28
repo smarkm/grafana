@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clientrest "k8s.io/client-go/rest"
 
-	folders "github.com/grafana/grafana/apps/folder/pkg/apis/folder/v1beta1"
+	folders "github.com/grafana/grafana/apps/folder/pkg/apis/folder/v1"
 	"github.com/grafana/grafana/pkg/api/dtos"
 	grafanarest "github.com/grafana/grafana/pkg/apiserver/rest"
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
@@ -502,6 +502,7 @@ func (m mockClientConfigProvider) GetDirectRestConfig(c *contextmodel.ReqContext
 }
 
 func (m mockClientConfigProvider) DirectlyServeHTTP(w http.ResponseWriter, r *http.Request) {}
+func (m mockClientConfigProvider) IsReady() bool                                            { return true }
 
 // for now, test only the general folder
 func TestGetFolderLegacyAndUnifiedStorage(t *testing.T) {
@@ -534,55 +535,49 @@ func TestGetFolderLegacyAndUnifiedStorage(t *testing.T) {
 			legacyFolder               folder.Folder
 			expectedFolder             dtos.Folder
 			expectedFolderServiceError error
-			unifiedStorageEnabled      bool
 			unifiedStorageMode         grafanarest.DualWriterMode
 			expectedCode               int
 		}
 
 		tcs := []testCase{
 			{
-				description:           "General folder - Legacy",
-				expectedCode:          http.StatusOK,
-				legacyFolder:          legacyFolder,
-				folderUID:             legacyFolder.UID,
-				expectedFolder:        expectedFolder,
-				unifiedStorageEnabled: false,
+				description:    "General folder - Legacy",
+				expectedCode:   http.StatusOK,
+				legacyFolder:   legacyFolder,
+				folderUID:      legacyFolder.UID,
+				expectedFolder: expectedFolder,
 			},
 			{
-				description:           "General folder - Unified storage, mode 1",
-				expectedCode:          http.StatusOK,
-				legacyFolder:          legacyFolder,
-				folderUID:             legacyFolder.UID,
-				expectedFolder:        expectedFolder,
-				unifiedStorageEnabled: true,
-				unifiedStorageMode:    grafanarest.Mode1,
+				description:        "General folder - Unified storage, mode 1",
+				expectedCode:       http.StatusOK,
+				legacyFolder:       legacyFolder,
+				folderUID:          legacyFolder.UID,
+				expectedFolder:     expectedFolder,
+				unifiedStorageMode: grafanarest.Mode1,
 			},
 			{
-				description:           "General folder - Unified storage, mode 2",
-				expectedCode:          http.StatusOK,
-				legacyFolder:          legacyFolder,
-				folderUID:             legacyFolder.UID,
-				expectedFolder:        expectedFolder,
-				unifiedStorageEnabled: true,
-				unifiedStorageMode:    grafanarest.Mode2,
+				description:        "General folder - Unified storage, mode 2",
+				expectedCode:       http.StatusOK,
+				legacyFolder:       legacyFolder,
+				folderUID:          legacyFolder.UID,
+				expectedFolder:     expectedFolder,
+				unifiedStorageMode: grafanarest.Mode2,
 			},
 			{
-				description:           "General folder - Unified storage, mode 3",
-				expectedCode:          http.StatusOK,
-				legacyFolder:          legacyFolder,
-				folderUID:             legacyFolder.UID,
-				expectedFolder:        expectedFolder,
-				unifiedStorageEnabled: true,
-				unifiedStorageMode:    grafanarest.Mode3,
+				description:        "General folder - Unified storage, mode 3",
+				expectedCode:       http.StatusOK,
+				legacyFolder:       legacyFolder,
+				folderUID:          legacyFolder.UID,
+				expectedFolder:     expectedFolder,
+				unifiedStorageMode: grafanarest.Mode3,
 			},
 			{
-				description:           "General folder - Unified storage, mode 4",
-				expectedCode:          http.StatusOK,
-				legacyFolder:          legacyFolder,
-				folderUID:             legacyFolder.UID,
-				expectedFolder:        expectedFolder,
-				unifiedStorageEnabled: true,
-				unifiedStorageMode:    grafanarest.Mode4,
+				description:        "General folder - Unified storage, mode 4",
+				expectedCode:       http.StatusOK,
+				legacyFolder:       legacyFolder,
+				folderUID:          legacyFolder.UID,
+				expectedFolder:     expectedFolder,
+				unifiedStorageMode: grafanarest.Mode4,
 			},
 		}
 

@@ -1,9 +1,11 @@
 import { PropsOf } from '@emotion/react';
 
+import { useAssistant } from '@grafana/assistant';
 import { AppEvents } from '@grafana/data';
 import { t } from '@grafana/i18n';
+import { config } from '@grafana/runtime';
 import { Button, ComponentSize, Dropdown, Menu } from '@grafana/ui';
-import appEvents from 'app/core/app_events';
+import { appEvents } from 'app/core/app_events';
 import MenuItemPauseRule from 'app/features/alerting/unified/components/MenuItemPauseRule';
 import MoreButton from 'app/features/alerting/unified/components/MoreButton';
 import { useRulePluginLinkExtension } from 'app/features/alerting/unified/plugins/useRulePluginLinkExtensions';
@@ -12,7 +14,9 @@ import { PromAlertingRuleState, RulerRuleDTO } from 'app/types/unified-alerting-
 
 import {
   AlertRuleAction,
+  EnrichmentAction,
   skipToken,
+  useEnrichmentAbility,
   useGrafanaPromRuleAbilities,
   useRulerRuleAbilities,
 } from '../../hooks/useAbilities';
@@ -26,6 +30,7 @@ import {
   rulerRuleType,
 } from '../../utils/rules';
 import { createRelativeUrl } from '../../utils/url';
+import { AnalyzeRuleButton } from '../assistant/AnalizeRuleButton';
 import { DeclareIncidentMenuItem } from '../bridges/DeclareIncidentButton';
 
 interface Props {
@@ -34,6 +39,7 @@ interface Props {
   identifier: RuleIdentifier;
   groupIdentifier: RuleGroupIdentifierV2;
   handleSilence: () => void;
+  handleManageEnrichments?: () => void;
   handleDelete: (identifier: EditableRuleIdentifier, groupIdentifier: RuleGroupIdentifierV2) => void;
   handleDuplicateRule: (identifier: RuleIdentifier) => void;
   onPauseChange?: () => void;
@@ -53,6 +59,7 @@ const AlertRuleMenu = ({
   identifier,
   groupIdentifier,
   handleSilence,
+  handleManageEnrichments,
   handleDelete,
   handleDuplicateRule,
   onPauseChange,
@@ -109,6 +116,8 @@ const AlertRuleMenu = ({
 
   const extensionsAvailable = ruleExtensionLinks.length > 0;
 
+  const [enrichmentReadSupported, enrichmentReadAllowed] = useEnrichmentAbility(EnrichmentAction.Read);
+
   /**
    * Since Incident isn't available as an open-source product we shouldn't show it for Open-Source licenced editions of Grafana.
    * We should show it in development mode
@@ -118,6 +127,9 @@ const AlertRuleMenu = ({
     (!isOpenSourceEdition() || isLocalDevEnv()) &&
     prometheusRuleType.alertingRule(promRule) &&
     promRule.state === PromAlertingRuleState.Firing;
+
+  const { isAvailable: isAssistantAvailable } = useAssistant();
+  const shouldShowAnalyzeRuleButton = isAssistantAvailable && prometheusRuleType.grafana.rule(promRule);
 
   const shareUrl = createShareLink(identifier);
 
@@ -131,8 +143,23 @@ const AlertRuleMenu = ({
     (rulerRuleType.grafana.rule(rulerRule) && isPausedRule(rulerRule)) ||
     (prometheusRuleType.grafana.rule(promRule) && promRule.isPaused);
 
+  // todo: make this new menu item for enrichments an extension of the alertrulemenu items. For first iteration, we'll keep it here.
+  const canManageEnrichments =
+    ruleUid &&
+    handleManageEnrichments &&
+    config.featureToggles.alertingEnrichmentPerRule &&
+    enrichmentReadSupported &&
+    enrichmentReadAllowed;
+
   const menuItems = (
     <>
+      {canManageEnrichments && (
+        <Menu.Item
+          label={t('alerting.alert-menu.manage-enrichments', 'Manage enrichments')}
+          icon="edit"
+          onClick={handleManageEnrichments}
+        />
+      )}
       {canPause && ruleUid && groupIdentifier.groupOrigin === 'grafana' && (
         <MenuItemPauseRule
           uid={ruleUid}
@@ -150,6 +177,7 @@ const AlertRuleMenu = ({
       )}
       {/* TODO Migrate Declare Incident to plugin links extensions */}
       {shouldShowDeclareIncidentButton && <DeclareIncidentMenuItem title={promRule.name} url={''} />}
+      {shouldShowAnalyzeRuleButton && <AnalyzeRuleButton rule={promRule} />}
       {canDuplicate && (
         <Menu.Item
           label={t('alerting.alert-menu.duplicate', 'Duplicate')}

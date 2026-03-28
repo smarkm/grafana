@@ -12,8 +12,9 @@
 package dataquery
 
 import (
+	bytes "bytes"
 	json "encoding/json"
-	fmt "fmt"
+	errors "errors"
 )
 
 type BucketAggregation = DateHistogramOrHistogramOrTermsOrFiltersOrGeoHashGridOrNested
@@ -493,6 +494,14 @@ func NewTopMetrics() *TopMetrics {
 	}
 }
 
+type QueryType string
+
+const (
+	QueryTypeLucene QueryType = "lucene"
+	QueryTypeDsl    QueryType = "dsl"
+	QueryTypeEsql   QueryType = "esql"
+)
+
 type BaseBucketAggregation struct {
 	Id       string                `json:"id"`
 	Type     BucketAggregationType `json:"type"`
@@ -772,14 +781,8 @@ func NewMovingAverageHoltWintersModelSettings() *MovingAverageHoltWintersModelSe
 type ElasticsearchDataQuery struct {
 	// Alias pattern
 	Alias *string `json:"alias,omitempty"`
-	// Lucene query
+	// Query string (Lucene or DSL depending on queryType)
 	Query *string `json:"query,omitempty"`
-	// Name of time field
-	TimeField *string `json:"timeField,omitempty"`
-	// List of bucket aggregations
-	BucketAggs []BucketAggregation `json:"bucketAggs,omitempty"`
-	// List of metric aggregations
-	Metrics []MetricAggregation `json:"metrics,omitempty"`
 	// A unique identifier for the query within the list of targets.
 	// In server side expressions, the refId is used as a variable name to identify results.
 	// By default, the UI will assign A->Z; however setting meaningful names may be useful.
@@ -788,7 +791,18 @@ type ElasticsearchDataQuery struct {
 	Hide *bool `json:"hide,omitempty"`
 	// Specify the query flavor
 	// TODO make this required and give it a default
+	// Query type - determines how the query field is interpreted
 	QueryType *string `json:"queryType,omitempty"`
+	// Name of time field
+	TimeField *string `json:"timeField,omitempty"`
+	// Editor type
+	EditorType *string `json:"editorType,omitempty"`
+	// List of bucket aggregations
+	BucketAggs []BucketAggregation `json:"bucketAggs,omitempty"`
+	// List of metric aggregations
+	Metrics []MetricAggregation `json:"metrics,omitempty"`
+	// Metadata for variable queries
+	Meta *DataqueryElasticsearchDataQueryMeta `json:"meta,omitempty"`
 	// For mixed data sources the selected datasource is on the query level.
 	// For non mixed scenarios this is undefined.
 	// TODO find a better way to do this ^ that's friendly to schema
@@ -1079,6 +1093,16 @@ type DataqueryMovingAverageHoltWintersModelSettingsSettings struct {
 // NewDataqueryMovingAverageHoltWintersModelSettingsSettings creates a new DataqueryMovingAverageHoltWintersModelSettingsSettings object.
 func NewDataqueryMovingAverageHoltWintersModelSettingsSettings() *DataqueryMovingAverageHoltWintersModelSettingsSettings {
 	return &DataqueryMovingAverageHoltWintersModelSettingsSettings{}
+}
+
+type DataqueryElasticsearchDataQueryMeta struct {
+	TextField  *string `json:"textField,omitempty"`
+	ValueField *string `json:"valueField,omitempty"`
+}
+
+// NewDataqueryElasticsearchDataQueryMeta creates a new DataqueryElasticsearchDataQueryMeta object.
+func NewDataqueryElasticsearchDataQueryMeta() *DataqueryElasticsearchDataQueryMeta {
+	return &DataqueryElasticsearchDataQueryMeta{}
 }
 
 type DateHistogramOrHistogramOrTermsOrFiltersOrGeoHashGridOrNested struct {
@@ -1562,29 +1586,37 @@ func (resource StringOrDataqueryInlineScript) MarshalJSON() ([]byte, error) {
 	return []byte("null"), nil
 }
 
-// UnmarshalJSON implements a custom JSON unmarshalling logic to decode StringOrDataqueryInlineScript from JSON.
+// UnmarshalJSON implements a custom JSON unmarshalling logic to decode `StringOrDataqueryInlineScript` from JSON.
 func (resource *StringOrDataqueryInlineScript) UnmarshalJSON(raw []byte) error {
 	if raw == nil {
 		return nil
 	}
-	fields := make(map[string]json.RawMessage)
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return err
+
+	var errList []error
+
+	// String
+	var String string
+	if err := json.Unmarshal(raw, &String); err != nil {
+		errList = append(errList, err)
+		resource.String = nil
+	} else {
+		resource.String = &String
+		return nil
 	}
 
-	if fields["String"] != nil {
-		if err := json.Unmarshal(fields["String"], &resource.String); err != nil {
-			return fmt.Errorf("error decoding field 'String': %w", err)
-		}
+	// DataqueryInlineScript
+	var DataqueryInlineScript DataqueryInlineScript
+	dataqueryInlineScriptdec := json.NewDecoder(bytes.NewReader(raw))
+	dataqueryInlineScriptdec.DisallowUnknownFields()
+	if err := dataqueryInlineScriptdec.Decode(&DataqueryInlineScript); err != nil {
+		errList = append(errList, err)
+		resource.DataqueryInlineScript = nil
+	} else {
+		resource.DataqueryInlineScript = &DataqueryInlineScript
+		return nil
 	}
 
-	if fields["DataqueryInlineScript"] != nil {
-		if err := json.Unmarshal(fields["DataqueryInlineScript"], &resource.DataqueryInlineScript); err != nil {
-			return fmt.Errorf("error decoding field 'DataqueryInlineScript': %w", err)
-		}
-	}
-
-	return nil
+	return errors.Join(errList...)
 }
 
 type BucketScriptOrCumulativeSumOrDerivativeOrSerialDiffOrRawDataOrRawDocumentOrUniqueCountOrPercentilesOrExtendedStatsOrMinOrMaxOrSumOrAverageOrMovingAverageOrMovingFunctionOrLogsOrRateOrTopMetrics struct {

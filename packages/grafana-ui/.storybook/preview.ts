@@ -33,7 +33,12 @@ const handleThemeChange = (theme: GrafanaTheme2) => {
   }
 };
 
-const allowedExtraThemes: string[] = [];
+const allowedExtraThemes: string[] = [
+  'deuteranopia_protanopia_dark',
+  'deuteranopia_protanopia_light',
+  'tritanopia_dark',
+  'tritanopia_light',
+];
 
 if (process.env.NODE_ENV === 'development') {
   allowedExtraThemes.push('debug');
@@ -64,7 +69,18 @@ const preview: Preview = {
     docs: {
       container: ThemedDocsContainer,
     },
-    a11y: { test: 'error' },
+    a11y: {
+      test: 'error',
+      config: {
+        rules: [
+          {
+            id: 'scrollable-region-focusable',
+            selector: 'body',
+            enabled: false,
+          },
+        ],
+      },
+    },
     knobs: {
       disable: true,
     },
@@ -183,6 +199,9 @@ const preview: Preview = {
   },
   tags: ['autodocs'],
   loaders: [mswLoader],
+  initialGlobals: {
+    theme: process.env.STORYBOOK_THEME || 'system',
+  },
 };
 
 export default preview;

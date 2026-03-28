@@ -8,9 +8,10 @@ import {
   SceneQueryRunner,
   SceneVariable,
   SceneVariableState,
+  SwitchVariable,
   VizPanel,
 } from '@grafana/scenes';
-import { Spec as DashboardV2Spec } from '@grafana/schema/dist/esm/schema/dashboard/v2';
+import { Spec as DashboardV2Spec } from '@grafana/schema/apis/dashboard.grafana.app/v2';
 
 import { DashboardScene } from '../scene/DashboardScene';
 import { LibraryPanelBehavior } from '../scene/LibraryPanelBehavior';
@@ -43,7 +44,12 @@ export function validateVariable<
     );
     expect(sceneVariable?.state.datasource?.type).toEqual(variableKind.group);
     expect(sceneVariable?.state.datasource?.uid).toEqual(variableKind.datasource?.name);
-  } else if (variableKind.kind !== 'AdhocVariable') {
+  } else if (variableKind.kind === 'SwitchVariable' && sceneVariable instanceof SwitchVariable) {
+    expect(sceneVariable).toBeInstanceOf(sceneVariableClass);
+    expect(scene.state?.$variables?.getByName(dashSpec.variables[index].spec.name)?.getValue()).toBe(
+      variableKind.spec.current
+    );
+  } else if (variableKind.kind !== 'AdhocVariable' && variableKind.kind !== 'SwitchVariable') {
     expect(sceneVariable).toBeInstanceOf(sceneVariableClass);
     expect(scene.state?.$variables?.getByName(dashSpec.variables[index].spec.name)?.getValue()).toBe(
       variableKind.spec.current.value

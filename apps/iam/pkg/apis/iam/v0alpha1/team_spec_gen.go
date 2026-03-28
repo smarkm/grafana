@@ -4,11 +4,18 @@ package v0alpha1
 
 // +k8s:openapi-gen=true
 type TeamSpec struct {
-	Title string `json:"title"`
-	Email string `json:"email"`
+	Title       string `json:"title"`
+	Email       string `json:"email"`
+	Provisioned bool   `json:"provisioned"`
+	ExternalUID string `json:"externalUID"`
 }
 
 // NewTeamSpec creates a new TeamSpec object.
 func NewTeamSpec() *TeamSpec {
 	return &TeamSpec{}
+}
+
+// OpenAPIModelName returns the OpenAPI model name for TeamSpec.
+func (TeamSpec) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.iam.pkg.apis.iam.v0alpha1.TeamSpec"
 }

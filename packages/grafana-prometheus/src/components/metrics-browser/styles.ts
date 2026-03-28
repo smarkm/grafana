@@ -7,6 +7,13 @@ export const getStylesMetricsBrowser = (theme: GrafanaTheme2) => ({
     backgroundColor: theme.colors.background.secondary,
     padding: theme.spacing(1),
     width: '100%',
+    borderRadius: theme.shape.radius.default,
+  }),
+  spinner: css({
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: 120,
   }),
 });
 

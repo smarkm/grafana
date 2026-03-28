@@ -8,6 +8,7 @@ import {
   createFieldConfigRegistry,
   DashboardCursorSync,
   DataFrame,
+  DataLinksContext,
   EventBus,
   FieldColorModeId,
   FieldConfigSource,
@@ -33,7 +34,10 @@ import { defaultGraphConfig, getGraphFieldConfig } from 'app/plugins/panel/times
 import { Options as TimeSeriesOptions } from 'app/plugins/panel/timeseries/panelcfg.gen';
 import { ExploreGraphStyle } from 'app/types/explore';
 
-import { seriesVisibilityConfigFactory } from '../../dashboard/dashgrid/SeriesVisibilityConfigFactory';
+import {
+  isHideSeriesOverride,
+  seriesVisibilityConfigFactory,
+} from '../../dashboard/dashgrid/SeriesVisibilityConfigFactory';
 import { useExploreDataLinkPostProcessor } from '../hooks/useExploreDataLinkPostProcessor';
 
 import { applyGraphStyle, applyThresholdsConfig } from './exploreGraphStyleUtils';
@@ -59,6 +63,7 @@ interface Props {
   eventBus: EventBus;
   vizLegendOverrides?: Partial<VizLegendOptions>;
   toggleLegendRef?: React.MutableRefObject<(name: string | undefined, mode: SeriesVisibilityChangeMode) => void>;
+  queriesChangedIndexAtRun?: number;
 }
 
 export function ExploreGraph({
@@ -81,6 +86,7 @@ export function ExploreGraph({
   eventBus,
   vizLegendOverrides,
   toggleLegendRef,
+  queriesChangedIndexAtRun,
 }: Props) {
   const theme = useTheme2();
 
@@ -106,6 +112,13 @@ export function ExploreGraph({
     overrides: [],
   });
 
+  useEffect(() => {
+    setFieldConfig((fieldConfig) => ({
+      ...fieldConfig,
+      overrides: fieldConfig.overrides.filter((rule) => !isHideSeriesOverride(rule)),
+    }));
+  }, [queriesChangedIndexAtRun]);
+
   const styledFieldConfig = useMemo(() => {
     const withGraphStyle = applyGraphStyle(fieldConfig, graphStyle, yAxisMaximum);
     return applyThresholdsConfig(withGraphStyle, thresholdsStyle, thresholdsConfig);
@@ -121,9 +134,8 @@ export function ExploreGraph({
       replaceVariables: (value) => value, // We don't need proper replace here as it is only used in getLinks and we use getFieldLinks
       theme,
       fieldConfigRegistry,
-      dataLinkPostProcessor,
     });
-  }, [fieldConfigRegistry, data, timeZone, theme, styledFieldConfig, dataLinkPostProcessor]);
+  }, [fieldConfigRegistry, data, timeZone, theme, styledFieldConfig]);
 
   const annotationsWithConfig = useMemo(() => {
     return applyFieldOverrides({
@@ -168,10 +180,12 @@ export function ExploreGraph({
     eventBus,
     // TODO: Re-enable DashboardCursorSync.Crosshair when #81505 is fixed
     sync: () => DashboardCursorSync.Off,
-    onToggleSeriesVisibility(label: string, mode: SeriesVisibilityChangeMode) {
+    onToggleSeriesVisibility(label: string | string[] | null, mode: SeriesVisibilityChangeMode) {
+      if (typeof label !== 'string') {
+        return;
+      }
       setFieldConfig(seriesVisibilityConfigFactory(label, mode, fieldConfig, data));
     },
-    dataLinkPostProcessor,
   };
 
   function toggleLegend(name: string | undefined, mode: SeriesVisibilityChangeMode) {
@@ -197,6 +211,7 @@ export function ExploreGraph({
         showLegend: true,
         placement: 'bottom',
         calcs: [],
+        enableFacetedFilter: false,
         ...vizLegendOverrides,
       },
     }),
@@ -204,23 +219,25 @@ export function ExploreGraph({
   );
 
   return (
-    <PanelContextProvider value={panelContext}>
-      <PanelRenderer
-        data={{
-          series: dataWithConfig,
-          timeRange,
-          state: loadingState,
-          annotations: annotationsWithConfig,
-          structureRev,
-        }}
-        pluginId="timeseries"
-        title=""
-        width={width}
-        height={height}
-        onChangeTimeRange={onChangeTime}
-        timeZone={timeZone}
-        options={panelOptions}
-      />
-    </PanelContextProvider>
+    <DataLinksContext.Provider value={{ dataLinkPostProcessor }}>
+      <PanelContextProvider value={panelContext}>
+        <PanelRenderer
+          data={{
+            series: dataWithConfig,
+            timeRange,
+            state: loadingState,
+            annotations: annotationsWithConfig,
+            structureRev,
+          }}
+          pluginId="timeseries"
+          title=""
+          width={width}
+          height={height}
+          onChangeTimeRange={onChangeTime}
+          timeZone={timeZone}
+          options={panelOptions}
+        />
+      </PanelContextProvider>
+    </DataLinksContext.Provider>
   );
 }

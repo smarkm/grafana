@@ -1,7 +1,6 @@
 import { capitalize } from 'lodash';
 
 import { AlertState } from '@grafana/data';
-import { config } from '@grafana/runtime';
 import {
   Alert,
   AlertingRule,
@@ -44,7 +43,7 @@ import {
 
 import { CombinedRuleNamespace } from '../../../../types/unified-alerting';
 import { State } from '../components/StateTag';
-import { RuleHealth } from '../search/rulesSearchParser';
+import { RuleHealth, RuleSource } from '../search/rulesSearchParser';
 import { RuleFormType, RuleFormValues } from '../types/rule-form';
 
 import { RULER_NOT_SUPPORTED_MSG } from './constants';
@@ -120,6 +119,7 @@ export const rulerRuleType = {
     recordingRule: isCloudRecordingRulerRule,
   },
   any: {
+    rule: (rule?: RulerRuleDTO) => isCloudRulerRule(rule) || isGrafanaRulerRule(rule),
     recordingRule: (rule?: RulerRuleDTO) => isCloudRecordingRulerRule(rule) || isGrafanaRecordingRule(rule),
     alertingRule: (rule?: RulerRuleDTO) => isAlertingRulerRule(rule) || isGrafanaAlertingRule(rule),
   },
@@ -192,6 +192,16 @@ export function getRuleHealth(health: string): RuleHealth | undefined {
   }
 }
 
+export function getRuleSource(source: string): RuleSource | undefined {
+  if (source === 'grafana') {
+    return RuleSource.Grafana;
+  }
+  if (source === 'datasource') {
+    return RuleSource.DataSource;
+  }
+  return undefined;
+}
+
 export function getPendingPeriod(rule: CombinedRule): string | undefined {
   if (rulerRuleType.any.recordingRule(rule.rulerRule)) {
     return undefined;
@@ -252,21 +262,8 @@ export function getRulePluginOrigin(rule?: Rule | PromRuleDTO | RulerRuleDTO): R
   }
 
   const pluginId = match.groups.pluginId;
-  const pluginInstalled = isPluginInstalled(pluginId);
-
-  if (!pluginInstalled) {
-    return undefined;
-  }
 
   return { pluginId };
-}
-
-function isPluginInstalled(pluginId: string) {
-  return Boolean(config.apps[pluginId]);
-}
-
-export function isPluginProvidedGroup(group: RulerRuleGroupDTO): boolean {
-  return group.rules.some((rule) => isPluginProvidedRule(rule));
 }
 
 export function isPluginProvidedRule(rule?: Rule | PromRuleDTO | RulerRuleDTO): boolean {
@@ -552,3 +549,6 @@ export function getRuleUID(rule?: RulerRuleDTO | Rule) {
 
   return ruleUid;
 }
+
+export const NO_GROUP_PREFIX = 'no_group_for_rule_';
+export const isUngroupedRuleGroup = (group: string): boolean => group.startsWith(NO_GROUP_PREFIX);

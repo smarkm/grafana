@@ -35,7 +35,7 @@ type PluginInstaller struct {
 func ProvideInstaller(cfg *config.PluginManagementCfg, pluginRegistry registry.Service, pluginLoader loader.Service,
 	pluginRepo repo.Service, serviceRegistry auth.ExternalServiceRegistry) *PluginInstaller {
 	return New(cfg, pluginRegistry, pluginLoader, pluginRepo,
-		storage.FileSystem(log.NewPrettyLogger("installer.fs"), cfg.PluginsPath), storage.SimpleDirNameGeneratorFunc, serviceRegistry)
+		storage.FileSystem(log.NewPrettyLogger("installer.fs"), cfg.PluginsPaths[0]), storage.SimpleDirNameGeneratorFunc, serviceRegistry)
 }
 
 func New(cfg *config.PluginManagementCfg, pluginRegistry registry.Service, pluginLoader loader.Service,
@@ -71,7 +71,7 @@ func (m *PluginInstaller) Add(ctx context.Context, pluginID, version string, opt
 	for _, dep := range archive.Dependencies {
 		m.log.Info(fmt.Sprintf("Fetching %s dependency %s...", pluginID, dep.ID))
 
-		err = m.Add(ctx, dep.ID, "", opts)
+		err = m.Add(ctx, dep.ID, "", plugins.NewAddOpts(opts.GrafanaVersion(), opts.OS(), opts.Arch(), ""))
 		if err != nil {
 			var dupeErr plugins.DuplicateError
 			if errors.As(err, &dupeErr) {

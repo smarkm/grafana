@@ -413,8 +413,11 @@
         }
       },
       "prom-query-builder-options": {
-        "aria-label-lower-limit-parameter": "Установить нижний предел для параметра шага",
+        "aria-label-exemplars": "Переключатель образцов.",
+        "aria-label-format": "Форматировать комбинированный список",
+        "aria-label-lower-limit-parameter": "Текстовое поле минимального шага, установить нижний предел для параметра шага",
         "aria-label-select-resolution": "Выбрать разрешение",
+        "aria-label-type": "Группа радиокнопок",
         "format-options": {
           "label-heatmap": "Тепловая карта",
           "label-table": "Таблица",
@@ -438,6 +441,7 @@
         "title-parsing-error-switch-builder": "Ошибка анализа. Переключиться в режим конструктора?"
       },
       "prom-query-legend-editor": {
+        "aria-label-legend": "Комбинированный список с подписью",
         "label-legend": "Условные обозначения",
         "placeholder-select-legend-mode": "Выберите режим условных обозначений",
         "tooltip-legend": "Переопределение или шаблон имени ряда. Например, вместо {{templateExample}} будет использоваться значение метки для {{labelName}}."
@@ -482,11 +486,6 @@
         "message-no-metrics-found": "В источнике данных нет метрик.",
         "name": "Имя",
         "type": "Тип"
-      },
-      "update-function-args": {
-        "text": {
-          "query-parsing-is-ambiguous": "Неоднозначные результаты анализа запроса."
-        }
       }
     }
   }

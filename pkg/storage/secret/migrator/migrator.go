@@ -43,7 +43,7 @@ func (*SecretDB) AddMigration(mg *migrator.Migrator) {
 
 	mg.AddMigration("Initialize secrets tables", &migrator.RawSQLMigration{})
 
-	tables := []migrator.Table{}
+	tables := make([]migrator.Table, 0, 4)
 
 	secureValueTable := migrator.Table{
 		Name: TableNameSecureValue,
@@ -77,7 +77,7 @@ func (*SecretDB) AddMigration(mg *migrator.Migrator) {
 	}
 	tables = append(tables, secureValueTable)
 
-	tables = append(tables, migrator.Table{
+	keeperTable := migrator.Table{
 		Name: TableNameKeeper,
 		Columns: []*migrator.Column{
 			// Kubernetes Metadata
@@ -100,7 +100,8 @@ func (*SecretDB) AddMigration(mg *migrator.Migrator) {
 		Indices: []*migrator.Index{
 			{Cols: []string{"namespace", "name"}, Type: migrator.UniqueIndex},
 		},
-	})
+	}
+	tables = append(tables, keeperTable)
 
 	dataKeyTable := migrator.Table{
 		Name: TableNameDataKey,
@@ -181,4 +182,65 @@ func (*SecretDB) AddMigration(mg *migrator.Migrator) {
 		Length:   253, // Limit enforced by K8s.
 		Nullable: true,
 	}))
+
+	mg.AddMigration("add lease_token column to "+TableNameSecureValue, migrator.NewAddColumnMigration(secureValueTable, &migrator.Column{
+		Name:     "lease_token",
+		Type:     migrator.DB_NVarchar,
+		Length:   36,
+		Nullable: true,
+	}))
+	mg.AddMigration("add lease_token index to "+TableNameSecureValue, migrator.NewAddIndexMigration(secureValueTable, &migrator.Index{
+		Cols: []string{"lease_token"},
+	}))
+	mg.AddMigration("add lease_created column to "+TableNameSecureValue, migrator.NewAddColumnMigration(secureValueTable, &migrator.Column{
+		Name:     "lease_created",
+		Type:     migrator.DB_BigInt,
+		Nullable: false,
+		Default:  "0",
+	}))
+	mg.AddMigration("add lease_created index to "+TableNameSecureValue, migrator.NewAddIndexMigration(secureValueTable, &migrator.Index{
+		Cols: []string{"lease_created"},
+	}))
+
+	mg.AddMigration("add data_key_id column to "+TableNameEncryptedValue, migrator.NewAddColumnMigration(encryptedValueTable, &migrator.Column{
+		Name:     "data_key_id",
+		Type:     migrator.DB_NVarchar,
+		Length:   100,
+		Nullable: false,
+		Default:  "''",
+	}))
+	mg.AddMigration("add data_key_id index to "+TableNameEncryptedValue, migrator.NewAddIndexMigration(encryptedValueTable, &migrator.Index{
+		Cols: []string{"data_key_id"},
+	}))
+	mg.AddMigration("add active column to "+TableNameKeeper, migrator.NewAddColumnMigration(keeperTable, &migrator.Column{
+		Name:     "active",
+		Type:     migrator.DB_Bool,
+		Nullable: false,
+		Default:  "false",
+	}))
+	mg.AddMigration("add active column index to "+TableNameKeeper, migrator.NewAddIndexMigration(keeperTable, &migrator.Index{
+		Cols: []string{"namespace", "name", "active"},
+	}))
+	mg.AddMigration("set secret_secure_value.keeper to 'system' where keeper is null in "+TableNameSecureValue, migrator.NewRawSQLMigration(
+		fmt.Sprintf("UPDATE %s SET keeper = '%s' WHERE keeper IS NULL", TableNameSecureValue, contracts.SystemKeeperName),
+	))
+
+	encryptedValueTableUniqueKey := migrator.Index{Cols: []string{"namespace", "name", "version"}, Type: migrator.UniqueIndex}
+	updatedEncryptedValueTable := migrator.Table{
+		Name: TableNameEncryptedValue,
+		Columns: []*migrator.Column{
+			{Name: "namespace", Type: migrator.DB_NVarchar, Length: 253, Nullable: false, IsPrimaryKey: true}, // Limit enforced by K8s.
+			{Name: "name", Type: migrator.DB_NVarchar, Length: 253, Nullable: false, IsPrimaryKey: true},
+			{Name: "version", Type: migrator.DB_BigInt, Nullable: false, IsPrimaryKey: true},
+			{Name: "encrypted_data", Type: migrator.DB_Blob, Nullable: false},
+			{Name: "created", Type: migrator.DB_BigInt, Nullable: false},
+			{Name: "updated", Type: migrator.DB_BigInt, Nullable: false},
+			{Name: "data_key_id", Type: migrator.DB_NVarchar, Length: 100, Nullable: false, Default: "''"},
+		},
+		PrimaryKeys: []string{"namespace", "name", "version"},
+		Indices: []*migrator.Index{
+			{Cols: []string{"data_key_id"}},
+		},
+	}
+	migrator.ConvertUniqueKeyToPrimaryKey(mg, encryptedValueTableUniqueKey, updatedEncryptedValueTable)
 }

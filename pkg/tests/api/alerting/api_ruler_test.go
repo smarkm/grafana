@@ -39,24 +39,25 @@ import (
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/tests/testinfra"
 	"github.com/grafana/grafana/pkg/util"
+	"github.com/grafana/grafana/pkg/util/testutil"
 )
 
 //go:embed test-data/*.*
 var testData embed.FS
 
 func TestIntegrationAlertRulePermissions(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+	testutil.SkipIntegrationTestInShortMode(t)
 
-		// Setup Grafana and its Database
-	}
+	// Setup Grafana and its Database
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, p := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
-		DisableLegacyAlerting: true,
-		EnableUnifiedAlerting: true,
-		DisableAnonymous:      true,
-		AppModeProduction:     true,
+		DisableAuthZClientCache: true,
+		DisableLegacyAlerting:   true,
+		EnableUnifiedAlerting:   true,
+		DisableAnonymous:        true,
+		AppModeProduction:       true,
 	})
 
 	grafanaListedAddr, env := testinfra.StartGrafanaEnv(t, dir, p)
@@ -353,18 +354,18 @@ func TestIntegrationAlertRulePermissions(t *testing.T) {
 }
 
 func TestIntegrationAlertRuleNestedPermissions(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+	testutil.SkipIntegrationTestInShortMode(t)
 
-		// Setup Grafana and its Database
-	}
+	// Setup Grafana and its Database
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, p := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
-		DisableLegacyAlerting: true,
-		EnableUnifiedAlerting: true,
-		DisableAnonymous:      true,
-		AppModeProduction:     true,
+		DisableAuthZClientCache: true,
+		DisableLegacyAlerting:   true,
+		EnableUnifiedAlerting:   true,
+		DisableAnonymous:        true,
+		AppModeProduction:       true,
 	})
 
 	grafanaListedAddr, env := testinfra.StartGrafanaEnv(t, dir, p)
@@ -712,7 +713,7 @@ func TestIntegrationAlertRuleNestedPermissions(t *testing.T) {
 	})
 }
 
-func TestAlertRulePostExport(t *testing.T) {
+func TestIntegrationAlertRulePostExport(t *testing.T) {
 	testinfra.SQLiteIntegrationTest(t)
 
 	// Setup Grafana and its Database
@@ -791,9 +792,8 @@ func TestAlertRulePostExport(t *testing.T) {
 }
 
 func TestIntegrationAlertRuleEditorSettings(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	const folderName = "folder1"
@@ -966,11 +966,10 @@ func TestIntegrationAlertRuleEditorSettings(t *testing.T) {
 }
 
 func TestIntegrationAlertRuleConflictingTitle(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+	testutil.SkipIntegrationTestInShortMode(t)
 
-		// Setup Grafana and its Database
-	}
+	// Setup Grafana and its Database
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -1050,9 +1049,8 @@ func TestIntegrationAlertRuleConflictingTitle(t *testing.T) {
 }
 
 func TestIntegrationRulerRulesFilterByDashboard(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -1170,6 +1168,7 @@ func TestIntegrationRulerRulesFilterByDashboard(t *testing.T) {
 						"expression": "2 + 3 \u003e 1",
 						"intervalMs": 1000,
 						"maxDataPoints": 43200,
+						"refId": "A",
 						"type": "math"
 					}
 				}],
@@ -1213,6 +1212,7 @@ func TestIntegrationRulerRulesFilterByDashboard(t *testing.T) {
 						"expression": "2 + 3 \u003e 1",
 						"intervalMs": 1000,
 						"maxDataPoints": 43200,
+						"refId": "A",
 						"type": "math"
 					}
 				}],
@@ -1268,6 +1268,7 @@ func TestIntegrationRulerRulesFilterByDashboard(t *testing.T) {
 						"expression": "2 + 3 \u003e 1",
 						"intervalMs": 1000,
 						"maxDataPoints": 43200,
+						"refId": "A",
 						"type": "math"
 					}
 				}],
@@ -1423,18 +1424,18 @@ func TestIntegrationRulerRulesFilterByDashboard(t *testing.T) {
 }
 
 func TestIntegrationRuleGroupSequence(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+	testutil.SkipIntegrationTestInShortMode(t)
 
-		// Setup Grafana and its Database
-	}
+	// Setup Grafana and its Database
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
-		DisableLegacyAlerting: true,
-		EnableUnifiedAlerting: true,
-		DisableAnonymous:      true,
-		AppModeProduction:     true,
+		DisableAuthZClientCache: true,
+		DisableLegacyAlerting:   true,
+		EnableUnifiedAlerting:   true,
+		DisableAnonymous:        true,
+		AppModeProduction:       true,
 	})
 	grafanaListedAddr, env := testinfra.StartGrafanaEnv(t, dir, path)
 
@@ -1533,9 +1534,8 @@ func TestIntegrationRuleGroupSequence(t *testing.T) {
 }
 
 func TestIntegrationRuleCreate(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	testinfra.SQLiteIntegrationTest(t)
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
 		DisableLegacyAlerting: true,
@@ -1616,7 +1616,7 @@ func TestIntegrationRuleCreate(t *testing.T) {
 									To:   apimodels.Duration(15 * time.Minute),
 								},
 								DatasourceUID: expr.DatasourceUID,
-								Model:         json.RawMessage(`{"expression":"1","intervalMs":1000,"maxDataPoints":43200,"type":"math"}`),
+								Model:         json.RawMessage(`{"expression":"1","intervalMs":1000,"maxDataPoints":43200,"refId":"A","type":"math"}`),
 							},
 						},
 						UpdatedBy: &apimodels.UserInfo{
@@ -1671,11 +1671,10 @@ func TestIntegrationRuleCreate(t *testing.T) {
 }
 
 func TestIntegrationRuleUpdate(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+	testutil.SkipIntegrationTestInShortMode(t)
 
-		// Setup Grafana and its Database
-	}
+	// Setup Grafana and its Database
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -1949,9 +1948,8 @@ func TestIntegrationRuleUpdate(t *testing.T) {
 }
 
 func TestIntegrationAlertAndGroupsQuery(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -2111,11 +2109,10 @@ func TestIntegrationAlertAndGroupsQuery(t *testing.T) {
 }
 
 func TestIntegrationRulerAccess(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+	testutil.SkipIntegrationTestInShortMode(t)
 
-		// Setup Grafana and its Database
-	}
+	// Setup Grafana and its Database
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -2227,11 +2224,10 @@ func TestIntegrationRulerAccess(t *testing.T) {
 }
 
 func TestIntegrationEval(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+	testutil.SkipIntegrationTestInShortMode(t)
 
-		// Setup Grafana and its Database
-	}
+	// Setup Grafana and its Database
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -2511,11 +2507,10 @@ func TestIntegrationEval(t *testing.T) {
 }
 
 func TestIntegrationQuota(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+	testutil.SkipIntegrationTestInShortMode(t)
 
-		// Setup Grafana and its Database
-	}
+	// Setup Grafana and its Database
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -2692,6 +2687,7 @@ func TestIntegrationQuota(t *testing.T) {
 							   "expression":"2 + 4 \u003E 1",
 							   "intervalMs":1000,
 							   "maxDataPoints":43200,
+							   "refId":"A",
 							   "type":"math"
 							}
 						     }
@@ -2726,9 +2722,8 @@ func TestIntegrationQuota(t *testing.T) {
 }
 
 func TestIntegrationDeleteFolderWithRules(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	opts := testinfra.GrafanaOpts{
@@ -2810,6 +2805,7 @@ func TestIntegrationDeleteFolderWithRules(t *testing.T) {
 												"expression": "2 + 3 > 1",
 												"intervalMs": 1000,
 												"maxDataPoints": 43200,
+												"refId": "A",
 												"type": "math"
 											}
 										}
@@ -2895,11 +2891,10 @@ func TestIntegrationDeleteFolderWithRules(t *testing.T) {
 }
 
 func TestIntegrationAlertRuleCRUD(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+	testutil.SkipIntegrationTestInShortMode(t)
 
-		// Setup Grafana and its Database
-	}
+	// Setup Grafana and its Database
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -3298,6 +3293,7 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 								   "expression":"2 + 3 \u003e 1",
 								   "intervalMs":1000,
 								   "maxDataPoints":43200,
+								   "refId":"A",
 								   "type":"math"
 								}
 							 }
@@ -3344,6 +3340,7 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 								   "expression":"2 + 3 \u003e 1",
 								   "intervalMs":1000,
 								   "maxDataPoints":43200,
+								   "refId":"A",
 								   "type":"math"
 								}
 							 }
@@ -3696,6 +3693,7 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 								   "expression":"2 + 3 \u003e 1",
 								   "intervalMs":1000,
 								   "maxDataPoints":43200,
+								   "refId":"A",
 								   "type":"math"
 								}
 							 }
@@ -3742,6 +3740,7 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 								   "expression":"2 + 3 \u003e 1",
 								   "intervalMs":1000,
 								   "maxDataPoints":43200,
+								   "refId":"A",
 								   "type":"math"
 								}
 							 }
@@ -3885,6 +3884,7 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 		                           "expression":"2 + 3 \u003C 1",
 		                           "intervalMs":1000,
 		                           "maxDataPoints":43200,
+								   "refId":"A",
 		                           "type":"math"
 		                        }
 		                     }
@@ -4008,6 +4008,7 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 						   "expression":"2 + 3 \u003C 1",
 						   "intervalMs":1000,
 						   "maxDataPoints":43200,
+						   "refId":"A",
 						   "type":"math"
 						}
 					     }
@@ -4106,6 +4107,7 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 						   "expression":"2 + 3 \u003C 1",
 						   "intervalMs":1000,
 						   "maxDataPoints":43200,
+						   "refId":"A",
 						   "type":"math"
 						}
 					     }
@@ -4180,11 +4182,10 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 }
 
 func TestIntegrationRulePause(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+	testutil.SkipIntegrationTestInShortMode(t)
 
-		// Setup Grafana and its Database
-	}
+	// Setup Grafana and its Database
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -4314,11 +4315,10 @@ func TestIntegrationRulePause(t *testing.T) {
 }
 
 func TestIntegrationHysteresisRule(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+	testutil.SkipIntegrationTestInShortMode(t)
 
-		// Setup Grafana and its Database. Scheduler is set to evaluate every 1 second
-	}
+	// Setup Grafana and its Database. Scheduler is set to evaluate every 1 second
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, p := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -4392,9 +4392,8 @@ func TestIntegrationHysteresisRule(t *testing.T) {
 }
 
 func TestIntegrationRuleNotificationSettings(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, p := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -4663,9 +4662,7 @@ func TestIntegrationRuleNotificationSettings(t *testing.T) {
 }
 
 func TestIntegrationRuleUpdateAllDatabases(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
 
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
 		DisableLegacyAlerting: true,
@@ -4718,9 +4715,8 @@ func TestIntegrationRuleUpdateAllDatabases(t *testing.T) {
 }
 
 func TestIntegrationRuleVersions(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, p := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -4810,9 +4806,8 @@ func TestIntegrationRuleVersions(t *testing.T) {
 }
 
 func TestIntegrationRuleSoftDelete(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, p := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -4923,9 +4918,8 @@ func TestIntegrationRuleSoftDelete(t *testing.T) {
 }
 
 func TestIntegrationRulePermanentlyDelete(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, p := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -5111,42 +5105,70 @@ func rulesNamespaceWithoutVariableValues(t *testing.T, b []byte) (string, map[st
 	return string(json), m
 }
 
-func createRule(t *testing.T, client apiClient, folder string) (apimodels.PostableRuleGroupConfig, string) {
+type ruleOption func(*ruleConfig)
+
+type ruleConfig struct {
+	rule      *apimodels.PostableExtendedRuleNode
+	groupName string
+}
+
+func withLabels(labels map[string]string) ruleOption {
+	return func(cfg *ruleConfig) {
+		cfg.rule.Labels = labels
+	}
+}
+
+func withRuleGroup(groupName string) ruleOption {
+	return func(cfg *ruleConfig) {
+		cfg.groupName = groupName
+	}
+}
+
+func createRule(t *testing.T, client apiClient, folder string, opts ...ruleOption) (apimodels.PostableRuleGroupConfig, string) {
 	t.Helper()
 
 	interval, err := model.ParseDuration("1m")
 	require.NoError(t, err)
 	doubleInterval := 2 * interval
-	rules := apimodels.PostableRuleGroupConfig{
-		Name:     "arulegroup",
-		Interval: interval,
-		Rules: []apimodels.PostableExtendedRuleNode{
-			{
-				ApiRuleNode: &apimodels.ApiRuleNode{
-					For:         &doubleInterval,
-					Labels:      map[string]string{"label1": "val1"},
-					Annotations: map[string]string{"annotation1": "val1"},
-				},
-				GrafanaManagedAlert: &apimodels.PostableGrafanaRule{
-					Title:     fmt.Sprintf("rule under folder %s", folder),
-					Condition: "A",
-					Data: []apimodels.AlertQuery{
-						{
-							RefID: "A",
-							RelativeTimeRange: apimodels.RelativeTimeRange{
-								From: apimodels.Duration(time.Duration(5) * time.Hour),
-								To:   apimodels.Duration(time.Duration(3) * time.Hour),
-							},
-							DatasourceUID: expr.DatasourceUID,
-							Model: json.RawMessage(`{
-								"type": "math",
-								"expression": "2 + 3 > 1"
-								}`),
-						},
+
+	rule := apimodels.PostableExtendedRuleNode{
+		ApiRuleNode: &apimodels.ApiRuleNode{
+			For:         &doubleInterval,
+			Labels:      map[string]string{"label1": "val1"},
+			Annotations: map[string]string{"annotation1": "val1"},
+		},
+		GrafanaManagedAlert: &apimodels.PostableGrafanaRule{
+			Title:     fmt.Sprintf("rule under folder %s", folder),
+			Condition: "A",
+			Data: []apimodels.AlertQuery{
+				{
+					RefID: "A",
+					RelativeTimeRange: apimodels.RelativeTimeRange{
+						From: apimodels.Duration(time.Duration(5) * time.Hour),
+						To:   apimodels.Duration(time.Duration(3) * time.Hour),
 					},
+					DatasourceUID: expr.DatasourceUID,
+					Model: json.RawMessage(`{
+						"type": "math",
+						"expression": "2 + 3 > 1"
+						}`),
 				},
 			},
 		},
+	}
+
+	cfg := &ruleConfig{
+		rule:      &rule,
+		groupName: "arulegroup",
+	}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	rules := apimodels.PostableRuleGroupConfig{
+		Name:     cfg.groupName,
+		Interval: interval,
+		Rules:    []apimodels.PostableExtendedRuleNode{*cfg.rule},
 	}
 	resp, status, _ := client.PostRulesGroupWithStatus(t, folder, &rules, false)
 	require.Equal(t, http.StatusAccepted, status)

@@ -1,9 +1,10 @@
 import { Chance } from 'chance';
-import { HttpResponse, http } from 'msw';
+import { HttpResponse, http, type HttpResponseResolver } from 'msw';
 
 import { treeViewersCanEdit, wellFormedTree } from '../../../fixtures/folders';
 
-const [mockTree] = wellFormedTree();
+const [mockTree, { folderB }] = wellFormedTree();
+// folderD is included in mockTree and will be returned by the handlers with managedBy: 'repo'
 const [mockTreeThatViewersCanEdit] = treeViewersCanEdit();
 const collator = new Intl.Collator();
 
@@ -11,6 +12,7 @@ const collator = new Intl.Collator();
 const mockAccessControl = {
   'dashboards.permissions:write': true,
   'dashboards:create': true,
+  'folders:write': true,
 };
 const additionalProperties = {
   canAdmin: true,
@@ -36,7 +38,7 @@ const listFoldersHandler = () =>
     const limit = parseInt(url.searchParams.get('limit') ?? '1000', 10);
     const page = parseInt(url.searchParams.get('page') ?? '1', 10);
 
-    const tree = permission === 'Edit' ? mockTreeThatViewersCanEdit : mockTree;
+    const tree = permission?.toLowerCase() === 'edit' ? mockTreeThatViewersCanEdit : mockTree;
 
     // reconstruct a folder API response from the flat tree fixture
     const folders = tree
@@ -47,6 +49,7 @@ const listFoldersHandler = () =>
           id: random.integer({ min: 1, max: 1000 }),
           uid: folder.item.uid,
           title: folder.item.kind === 'folder' ? folder.item.title : "invalid - this shouldn't happen",
+          ...('managedBy' in folder.item && folder.item.managedBy ? { managedBy: folder.item.managedBy } : {}),
         };
       })
       .sort((a, b) => collator.compare(a.title, b.title)) // API always sorts by title
@@ -75,9 +78,87 @@ const getFolderHandler = () =>
       uid: folder?.item.uid,
       ...additionalProperties,
       ...(accessControlQueryParam ? { accessControl: mockAccessControl } : {}),
+      ...('managedBy' in folder.item && folder.item.managedBy ? { managedBy: folder.item.managedBy } : {}),
     });
   });
 
-const handlers = [listFoldersHandler(), getFolderHandler()];
+const createFolderHandler = () =>
+  http.post<never, { title: string; parentUid?: string }>('/api/folders', async ({ request }) => {
+    const body = await request.json();
+    if (!body || !body.title) {
+      return HttpResponse.json({ message: 'folder title cannot be empty' }, { status: 400 });
+    }
+    const random = Chance(body.title);
+    const uid = random.string({ length: 10 });
+    const id = random.integer({ min: 1, max: 1000 });
+
+    return HttpResponse.json({
+      id,
+      uid: uid,
+      orgId: 1,
+      title: body.title,
+      url: `/dashboards/f/${uid}/${body.title}`,
+      hasAcl: false,
+      canSave: true,
+      canEdit: true,
+      canAdmin: true,
+      canDelete: true,
+      parentUid: body.parentUid,
+      createdBy: 'admin',
+      created: '2025-08-26T12:19:27+01:00',
+      updatedBy: 'admin',
+      updated: '2025-08-26T12:19:27+01:00',
+      version: 1,
+    });
+  });
+
+const saveFolderHandler = () =>
+  http.put<{ uid: string }, { title: string; version: number }>('/api/folders/:uid', async ({ params, request }) => {
+    const { uid } = params;
+    const body = await request.json();
+    const folder = mockTree.find((v) => v.item.uid === uid);
+
+    if (!folder) {
+      return HttpResponse.json({ message: 'folder not found' }, { status: 404 });
+    }
+
+    return HttpResponse.json({ ...folder.item, title: body.title });
+  });
+
+const getMockFolderCounts = (folder: number, dashboard: number, librarypanel: number, alertrule: number) => {
+  return {
+    folder,
+    dashboard,
+    librarypanel,
+    alertrule,
+  };
+};
+
+const folderCountsHandler = () =>
+  http.get<{ uid: string }, { title: string; version: number }>('/api/folders/:uid/counts', async ({ params }) => {
+    const { uid } = params;
+    const folder = mockTree.find((v) => v.item.uid === uid);
+
+    if (!folder) {
+      // The legacy API returns 0's for a folder that doesn't exist 🤷‍♂️
+      return HttpResponse.json(getMockFolderCounts(0, 0, 0, 0));
+    }
+
+    if (uid === folderB.item.uid) {
+      return HttpResponse.json({}, { status: 500 });
+    }
+
+    return HttpResponse.json(getMockFolderCounts(1, 1, 1, 1));
+  });
+
+export const customCreateFolderHandler = (resolver: HttpResponseResolver) => http.post('/api/folders', resolver);
+
+const handlers = [
+  listFoldersHandler(),
+  getFolderHandler(),
+  createFolderHandler(),
+  saveFolderHandler(),
+  folderCountsHandler(),
+];
 
 export default handlers;

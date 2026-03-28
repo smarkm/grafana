@@ -4,11 +4,13 @@ import { HttpResponse, delay, http } from 'msw';
 export const MOCK_GRAFANA_ALERT_RULE_TITLE = 'Test alert';
 
 import {
+  GrafanaAlertState,
   GrafanaRuleDefinition,
   PromRulesResponse,
   RulerGrafanaRuleDTO,
   RulerRuleGroupDTO,
   RulerRulesConfigDTO,
+  isGrafanaAlertState,
 } from '../../../../../../types/unified-alerting-dto';
 import { GrafanaGroupUpdatedResponse } from '../../../api/alertRuleModel';
 import { getHistoryResponse, grafanaRulerRule, rulerTestDb, time_0, time_plus_30 } from '../../grafanaRulerApi';
@@ -152,6 +154,7 @@ export const rulerRuleVersionHistoryHandler = () => {
         uid: 'service',
         name: '',
       };
+      draft.grafana_alert.message = 'Updated by provisioning service';
     }),
     produce(grafanaRulerRule, (draft: RulerGrafanaRuleDTO<GrafanaRuleDefinition>) => {
       draft.grafana_alert.version = 5;
@@ -169,6 +172,7 @@ export const rulerRuleVersionHistoryHandler = () => {
         uid: 'different',
         name: 'different user',
       };
+      draft.grafana_alert.message = 'Changed alert title and thresholds';
     }),
     produce(grafanaRulerRule, (draft: RulerGrafanaRuleDTO<GrafanaRuleDefinition>) => {
       draft.grafana_alert.version = 3;
@@ -191,6 +195,7 @@ export const rulerRuleVersionHistoryHandler = () => {
         uid: 'foo',
         name: '',
       };
+      draft.grafana_alert.message = 'Updated evaluation interval and routing';
     }),
     produce(grafanaRulerRule, (draft: RulerGrafanaRuleDTO<GrafanaRuleDefinition>) => {
       draft.grafana_alert.version = 1;
@@ -204,9 +209,58 @@ export const rulerRuleVersionHistoryHandler = () => {
   });
 };
 
+const filterHistoryByState = (
+  data: ReturnType<typeof getHistoryResponse>,
+  previous?: GrafanaAlertState,
+  current?: GrafanaAlertState
+) => {
+  if (!previous && !current) {
+    return data;
+  }
+  const stateMap: Record<string, string> = {
+    firing: 'Alerting',
+    normal: 'Normal',
+    pending: 'Pending',
+  };
+
+  const [timeValues, lineValues, labelsValues] = data.data.values;
+
+  const filteredRecords: typeof lineValues = [];
+  const filteredTimes: typeof timeValues = [];
+  const filteredLabels: typeof labelsValues = [];
+
+  lineValues.forEach((record, index: number) => {
+    const matchesPrevious = !previous || record.previous === (stateMap[previous] || previous);
+    const matchesCurrent = !current || record.current === (stateMap[current] || current);
+
+    if (matchesPrevious && matchesCurrent) {
+      filteredRecords.push(record);
+      filteredTimes.push(timeValues[index]);
+      filteredLabels.push(labelsValues[index]);
+    }
+  });
+
+  return {
+    ...data,
+    data: {
+      values: [filteredTimes, filteredRecords, filteredLabels],
+    },
+  };
+};
+
 export const historyHandler = () => {
-  return http.get('/api/v1/rules/history', () => {
-    return HttpResponse.json(getHistoryResponse([time_0, time_0, time_plus_30, time_plus_30]));
+  return http.get('/api/v1/rules/history', ({ request }) => {
+    const url = new URL(request.url);
+    const previousParam = url.searchParams.get('previous');
+    const currentParam = url.searchParams.get('current');
+
+    const previous = previousParam && isGrafanaAlertState(previousParam) ? previousParam : undefined;
+    const current = currentParam && isGrafanaAlertState(currentParam) ? currentParam : undefined;
+
+    const fullData = getHistoryResponse([time_0, time_0, time_plus_30, time_plus_30]);
+    const filteredData = filterHistoryByState(fullData, previous, current);
+
+    return HttpResponse.json(filteredData);
   });
 };
 

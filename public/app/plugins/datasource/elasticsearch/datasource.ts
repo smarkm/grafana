@@ -49,6 +49,8 @@ import {
   config,
 } from '@grafana/runtime';
 
+import { ElasticsearchVariableEditor } from './ElasticsearchVariableEditor';
+import { ElasticsearchVariableSupport } from './ElasticsearchVariableSupport';
 import { IndexPattern, intervalMap } from './IndexPattern';
 import LanguageProvider from './LanguageProvider';
 import { ElasticQueryBuilder } from './QueryBuilder';
@@ -81,6 +83,7 @@ import {
   isElasticsearchResponseWithAggregations,
   isElasticsearchResponseWithHits,
   ElasticsearchHits,
+  QueryType,
 } from './types';
 import { getScriptValue, isTimeSeriesQuery } from './utils';
 
@@ -127,6 +130,7 @@ export class ElasticDatasource
   includeFrozen: boolean;
   isProxyAccess: boolean;
   databaseVersion: SemVer | null;
+  defaultQueryMode?: QueryType;
 
   constructor(
     instanceSettings: DataSourceInstanceSettings<ElasticsearchOptions>,
@@ -146,9 +150,6 @@ export class ElasticDatasource
     this.intervalPattern = settingsData.interval;
     this.interval = settingsData.timeInterval;
     this.maxConcurrentShardRequests = settingsData.maxConcurrentShardRequests;
-    this.queryBuilder = new ElasticQueryBuilder({
-      timeField: this.timeField,
-    });
     this.logLevelField = settingsData.logLevelField || '';
     this.dataLinks = settingsData.dataLinks || [];
     this.includeFrozen = settingsData.includeFrozen ?? false;
@@ -157,11 +158,16 @@ export class ElasticDatasource
     this.annotations = {
       QueryEditor: ElasticsearchAnnotationsQueryEditor,
     };
-
+    this.defaultQueryMode = settingsData.defaultQueryMode;
+    this.queryBuilder = new ElasticQueryBuilder({
+      timeField: this.timeField,
+      defaultQueryMode: this.defaultQueryMode,
+    });
     if (this.logLevelField === '') {
       this.logLevelField = undefined;
     }
     this.languageProvider = new LanguageProvider(this);
+    this.variables = new ElasticsearchVariableSupport(this, ElasticsearchVariableEditor);
   }
 
   getResourceRequest(path: string, params?: BackendSrvRequest['params'], options?: Partial<BackendSrvRequest>) {
@@ -291,8 +297,8 @@ export class ElasticDatasource
     const dateRanges = [];
     const rangeStart: RangeMap = {};
     rangeStart[timeField] = {
-      from: options.range.from.valueOf(),
-      to: options.range.to.valueOf(),
+      gte: options.range.from.valueOf(),
+      lte: options.range.to.valueOf(),
       format: 'epoch_millis',
     };
     dateRanges.push({ range: rangeStart });
@@ -300,8 +306,8 @@ export class ElasticDatasource
     if (timeEndField) {
       const rangeEnd: RangeMap = {};
       rangeEnd[timeEndField] = {
-        from: options.range.from.valueOf(),
-        to: options.range.to.valueOf(),
+        gte: options.range.from.valueOf(),
+        lte: options.range.to.valueOf(),
         format: 'epoch_millis',
       };
       dateRanges.push({ range: rangeEnd });
@@ -611,6 +617,8 @@ export class ElasticDatasource
           metrics: [{ type: 'count', id: '1' }],
           timeField,
           bucketAggs,
+          queryType: query.queryType,
+          editorType: query.editorType,
         };
 
       case SupplementaryQueryType.LogsSample:
@@ -625,6 +633,8 @@ export class ElasticDatasource
             refId: `${REF_ID_STARTER_LOG_SAMPLE}${query.refId}`,
             query: query.query,
             metrics: [{ type: 'logs', id: '1', settings: { limit: options.limit.toString() } }],
+            queryType: query.queryType,
+            editorType: query.editorType,
           };
         }
 
@@ -632,6 +642,8 @@ export class ElasticDatasource
           refId: `${REF_ID_STARTER_LOG_SAMPLE}${query.refId}`,
           query: query.query,
           metrics: [{ type: 'logs', id: '1' }],
+          queryType: query.queryType,
+          editorType: query.editorType,
         };
 
       default:
@@ -1148,12 +1160,19 @@ export class ElasticDatasource
     const expandedQuery = {
       ...query,
       datasource: this.getRef(),
-      query: this.addAdHocFilters(this.interpolateLuceneQuery(query.query || '', scopedVars), filters),
+      query:
+        query.queryType === 'esql'
+          ? this.addAdHocFilters(this.interpolateEsqlQuery(query.query || '', scopedVars), filters)
+          : this.addAdHocFilters(this.interpolateLuceneQuery(query.query || '', scopedVars), filters),
       bucketAggs: query.bucketAggs?.map(interpolateBucketAgg),
     };
 
     const finalQuery = JSON.parse(this.templateSrv.replace(JSON.stringify(expandedQuery), scopedVars));
     return finalQuery;
+  }
+
+  private interpolateEsqlQuery(esqlQuery: string, scopedVars?: ScopedVars): string {
+    return this.templateSrv.replace(esqlQuery, scopedVars);
   }
 
   // Private method used in the `getDatabaseVersion` to get the database version from the Elasticsearch API.

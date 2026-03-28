@@ -4,6 +4,7 @@ import { PropsWithChildren } from 'react';
 import { CoreApp, DataQueryRequest, dateTime, LoadingState, PanelData, toDataFrame } from '@grafana/data';
 import { DataQuery } from '@grafana/schema';
 import { mockDataSource } from 'app/features/alerting/unified/mocks';
+import { ExpressionDatasourceUID } from 'app/features/expressions/types';
 
 import { filterPanelDataToQuery, Props, QueryEditorRow } from './QueryEditorRow';
 
@@ -31,6 +32,13 @@ jest.mock('app/features/explore/QueryLibrary/QueryLibraryContext', () => ({
 jest.mock('@grafana/i18n', () => ({
   ...jest.requireActual('@grafana/i18n'),
   t: (key: string, defaultValue: string) => defaultValue,
+}));
+
+jest.mock('@grafana/assistant', () => ({
+  useAssistant: () => ({ isAvailable: false }),
+  useProvidePageContext: jest.fn(),
+  OpenAssistantButton: () => null,
+  createAssistantContextItem: jest.fn(),
 }));
 
 jest.mock('@grafana/runtime', () => ({
@@ -458,6 +466,28 @@ describe('QueryEditorRow', () => {
 
     it('should not render saved queries buttons when app is unified alerting', async () => {
       render(<QueryEditorRow {...props(testData)} app={CoreApp.UnifiedAlerting} />);
+
+      await waitFor(() => {
+        expect(screen.queryByText('Saved queries')).not.toBeInTheDocument();
+      });
+    });
+
+    it('should not render saved queries buttons when query is an expression query', async () => {
+      const expressionQuery = {
+        refId: 'B',
+        datasource: {
+          uid: ExpressionDatasourceUID,
+          type: '__expr__',
+        },
+      };
+
+      const expressionProps = {
+        ...props(testData),
+        query: expressionQuery,
+        queries: [expressionQuery],
+      };
+
+      render(<QueryEditorRow {...expressionProps} />);
 
       await waitFor(() => {
         expect(screen.queryByText('Save query')).not.toBeInTheDocument();

@@ -1,8 +1,6 @@
 package authnimpl
 
 import (
-	"context"
-
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/infra/remotecache"
 	"github.com/grafana/grafana/pkg/infra/tracing"
@@ -57,12 +55,9 @@ func ProvideRegistration(
 	var proxyClients []authn.ProxyClient
 	var passwordClients []authn.PasswordClient
 
-	// always register LDAP if LDAP is enabled in SSO settings
-	if cfg.LDAPAuthEnabled || features.IsEnabledGlobally(featuremgmt.FlagSsoSettingsLDAP) {
-		ldap := clients.ProvideLDAP(cfg, ldapService, userService, authInfoService, tracer)
-		proxyClients = append(proxyClients, ldap)
-		passwordClients = append(passwordClients, ldap)
-	}
+	ldap := clients.ProvideLDAP(cfg, ldapService, userService, authInfoService, tracer)
+	proxyClients = append(proxyClients, ldap)
+	passwordClients = append(passwordClients, ldap)
 
 	if !cfg.DisableLogin {
 		grafana := clients.ProvideGrafana(cfg, userService, tracer)
@@ -79,26 +74,6 @@ func ProvideRegistration(
 
 		if !cfg.DisableLoginForm {
 			authnSvc.RegisterClient(clients.ProvideForm(passwordClient))
-		}
-	}
-
-	if cfg.PasswordlessMagicLinkAuth.Enabled && features.IsEnabled(context.Background(), featuremgmt.FlagPasswordlessMagicLinkAuthentication) {
-		hasEnabledProviders := authnSvc.IsClientEnabled(authn.ClientSAML) || authnSvc.IsClientEnabled(authn.ClientLDAP)
-		if !hasEnabledProviders {
-			oauthInfos := socialService.GetOAuthInfoProviders()
-			for _, provider := range oauthInfos {
-				if provider.Enabled {
-					hasEnabledProviders = true
-					break
-				}
-			}
-		}
-
-		if hasEnabledProviders {
-			logger.Error("Failed to configure passwordless magic link auth: cannot enable both passwordless magic link auth & SSO")
-		} else {
-			passwordless := clients.ProvidePasswordless(cfg, loginAttempts, userService, tempUserService, notificationService, cache)
-			authnSvc.RegisterClient(passwordless)
 		}
 	}
 
@@ -125,6 +100,7 @@ func ProvideRegistration(
 		authnSvc.RegisterClient(clients.ProvideOAuth(clientName, cfg, oauthTokenService, socialService, settingsProviderService, features, tracer))
 	}
 
+	//nolint:staticcheck // not yet migrated to OpenFeature
 	if features.IsEnabledGlobally(featuremgmt.FlagProvisioning) {
 		authnSvc.RegisterClient(clients.ProvideProvisioning())
 	}
@@ -140,11 +116,13 @@ func ProvideRegistration(
 	authnSvc.RegisterPostAuthHook(sync.ProvideOAuthTokenSync(oauthTokenService, sessionService, socialService, tracer, features).SyncOauthTokenHook, 60)
 	authnSvc.RegisterPostAuthHook(userSync.FetchSyncedUserHook, 100)
 
+	//nolint:staticcheck // not yet migrated to OpenFeature
 	if features.IsEnabledGlobally(featuremgmt.FlagEnableSCIM) {
 		authnSvc.RegisterPostAuthHook(userSync.ValidateUserProvisioningHook, 30)
 	}
 
 	rbacSync := sync.ProvideRBACSync(accessControlService, tracer, permRegistry)
+	//nolint:staticcheck // not yet migrated to OpenFeature
 	if features.IsEnabledGlobally(featuremgmt.FlagCloudRBACRoles) {
 		authnSvc.RegisterPostAuthHook(rbacSync.SyncCloudRoles, 110)
 		authnSvc.RegisterPreLogoutHook(gcomsso.ProvideGComSSOService(cfg).LogoutHook, 50)

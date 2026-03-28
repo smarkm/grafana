@@ -9,7 +9,7 @@ Make sure you have the following dependencies installed before setting up your d
 - [Git](https://git-scm.com/)
 - [Go](https://golang.org/dl/) (see [go.mod](../go.mod#L3) for minimum required version)
 - [Node.js (Long Term Support)](https://nodejs.org), with [corepack enabled](https://nodejs.org/api/corepack.html#enabling-the-feature). See [.nvmrc](../.nvmrc) for supported version. We recommend that you use a version manager such as [nvm](https://github.com/nvm-sh/nvm), [fnm](https://github.com/Schniz/fnm), or similar.
-- [GCC](https://gcc.gnu.org/) (required for Cgo] dependencies)
+- [GCC](https://gcc.gnu.org/) (optional, not recommded; enables CGO for smaller, dynamically linked binaries)
 
 ### macOS
 
@@ -18,7 +18,7 @@ We recommend using [Homebrew](https://brew.sh/) for installing any missing depen
 ```
 brew install git
 brew install go
-brew install node@22
+brew install node@24
 ```
 
 ### Windows
@@ -61,7 +61,7 @@ To remove precommit hooks:
 make lefthook-uninstall
 ```
 
-> We strongly encourage contributors who work on the frontend to install the precommit hooks, even if your IDE formats on save. By doing so, the `.betterer.results` file is kept in sync.
+> We strongly encourage contributors who work on the frontend to install the precommit hooks, even if your IDE formats on save. By doing so, the `eslint-suppressions.json` file is kept in sync.
 
 ## Build Grafana
 
@@ -134,7 +134,13 @@ Next, we'll explain how to build and run the web server that serves these fronte
 
 ### Backend
 
-Build and run the backend by running `make run` in the root directory of the repository. This command compiles the Go source code and starts a web server.
+Build and run the backend by running
+
+```
+make run
+```
+
+in the root directory of the repository. This command compiles the Go source code and starts a web server.
 
 > **Troubleshooting:** Are you having problems with [too many open files](#troubleshooting)?
 
@@ -148,9 +154,26 @@ Log in using the default credentials:
 
 When you log in for the first time, Grafana asks you to change your password.
 
+#### CGO and static builds
+
+By default, `make build-go` (and `make run`) does **not** set `CGO_ENABLED`. Go's default behavior is to enable CGO when a C compiler (GCC) is detected on the system, and disable it otherwise. For local development this is fine — CGO gives you a working SQLite driver for the embedded database.
+
+In **production**, Grafana is built with `CGO_ENABLED=0` to produce a fully static, pure Go binary. This is important because the build environment and the runtime environment are often different (for example, building on Debian but running on Alpine or a scratch container).
+
+You can control both `CGO_ENABLED` and `LDFLAGS` when invoking Make:
+
+```sh
+# Static build without CGO (production-style)
+CGO_ENABLED=0 make build-go
+
+# Build with Go defaults
+unset CGO_ENABLED && make build-go
+```
+
 #### Build on Windows
 
-The Grafana backend includes SQLite, a database which requires GCC to compile. So in order to compile Grafana on Windows you need to install GCC. We recommend [TDM-GCC](http://tdm-gcc.tdragon.net/download). Eventually, if you use [Scoop](https://scoop.sh), you can install GCC through that.
+The Grafana backend includes SQLite, a database which requires GCC to compile. So in order to compile Grafana on Windows you need to install GCC with binutils version 2.37 or later.
+We recommend [MinGW x64](https://www.mingw-w64.org/downloads). Eventually, if you use [Scoop](https://scoop.sh), you can install GCC through that.
 
 You can build the back-end as follows:
 
@@ -165,7 +188,7 @@ You can build the back-end as follows:
 3. Build the Grafana binaries:
 
 ```
-go run build.go build
+make build
 ```
 
 The Grafana binaries will be installed in `bin\\windows-amd64`.
@@ -194,11 +217,7 @@ go test -v ./pkg/...
 
 #### On Windows
 
-Running the backend tests on Windows currently needs some tweaking, so use the `build.go` script:
-
-```
-go run build.go test
-```
+Running the backend tests on Windows currently needs some tweaking; use `make test-go-unit` or the test commands in the Makefile.
 
 ### Run SQLite, PostgreSQL and MySQL integration tests
 
@@ -235,6 +254,8 @@ make test-go-integration-postgres
   - Download the _playwright-html-<number>_ artifact.
   - Unzip.
   - Run `yarn playwright show-report <reportLocation>`
+
+- There are also a set of acceptance tests that can be run with `yarn e2e:acceptance`. These tests should run against a Grafana instance with the default configuration (e.g. no provisioned dashboards/datasources), and are used to verify our cloud/on-prem images are working as expected.
 
 If you are curious about other commands, you can see the full list in [the Playwright documentation](https://playwright.dev/docs/test-cli#all-options).
 
@@ -311,7 +332,7 @@ ulimit -a
 To change the number of open files allowed, run:
 
 ```
-ulimit -S -n 4096
+ulimit -S -n 8000
 ```
 
 The number of files needed may be different on your environment. To determine the number of open files needed by `make run`, run:

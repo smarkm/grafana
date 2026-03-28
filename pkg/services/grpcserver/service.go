@@ -8,12 +8,15 @@ import (
 
 	"github.com/grafana/dskit/instrument"
 	"github.com/grafana/dskit/middleware"
+	"github.com/grafana/dskit/services"
 	grpcAuth "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/auth"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/keepalive"
 
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/registry"
@@ -34,20 +37,27 @@ type Provider interface {
 }
 
 type gPRCServerService struct {
-	cfg         setting.GRPCServerSettings
-	logger      log.Logger
-	server      *grpc.Server
-	address     string
-	enabled     bool
-	startedChan chan struct{}
+	cfg              setting.GRPCServerSettings
+	logger           log.Logger
+	server           *grpc.Server
+	address          string
+	enabled          bool
+	startedChan      chan struct{}
+	separateShutdown bool
 }
 
 func ProvideService(cfg *setting.Cfg, features featuremgmt.FeatureToggles, authenticator interceptors.Authenticator, tracer trace.Tracer, registerer prometheus.Registerer) (Provider, error) {
+	return provideService(cfg, features, authenticator, tracer, registerer, false)
+}
+
+func provideService(cfg *setting.Cfg, features featuremgmt.FeatureToggles, authenticator interceptors.Authenticator, tracer trace.Tracer, registerer prometheus.Registerer, separateShutdown bool) (*gPRCServerService, error) {
 	s := &gPRCServerService{
-		cfg:         cfg.GRPCServer,
-		logger:      log.New("grpc-server"),
-		enabled:     features.IsEnabledGlobally(featuremgmt.FlagGrpcServer), // TODO: replace with cfg.GRPCServer.Enabled when we remove feature toggle.
-		startedChan: make(chan struct{}),
+		cfg:    cfg.GRPCServer,
+		logger: log.New("grpc-server"),
+		//nolint:staticcheck // not yet migrated to OpenFeature
+		enabled:          features.IsEnabledGlobally(featuremgmt.FlagGrpcServer), // TODO: replace with cfg.GRPCServer.Enabled when we remove feature toggle.
+		startedChan:      make(chan struct{}),
+		separateShutdown: separateShutdown,
 	}
 
 	// Register the metric here instead of an init() function so that we do
@@ -104,12 +114,43 @@ func ProvideService(cfg *setting.Cfg, features featuremgmt.FeatureToggles, authe
 		opts = append(opts, grpc.MaxSendMsgSize(s.cfg.MaxSendMsgSize))
 	}
 
+	// Apply connection management settings
+	keepaliveParams := keepalive.ServerParameters{
+		MaxConnectionAge:      s.cfg.MaxConnectionAge,
+		MaxConnectionAgeGrace: s.cfg.MaxConnectionAgeGrace,
+		MaxConnectionIdle:     s.cfg.MaxConnectionIdle,
+		Time:                  s.cfg.KeepaliveTime,
+		Timeout:               s.cfg.KeepaliveTimeout,
+	}
+	keepalivePolicy := keepalive.EnforcementPolicy{
+		MinTime: s.cfg.KeepaliveMinTime,
+	}
+
+	// Only add keepalive options if any values are configured
+	if s.cfg.MaxConnectionAge > 0 || s.cfg.MaxConnectionAgeGrace > 0 || s.cfg.MaxConnectionIdle > 0 ||
+		s.cfg.KeepaliveTime > 0 || s.cfg.KeepaliveTimeout > 0 {
+		opts = append(opts, grpc.KeepaliveParams(keepaliveParams))
+	}
+	if s.cfg.KeepaliveMinTime > 0 {
+		opts = append(opts, grpc.KeepaliveEnforcementPolicy(keepalivePolicy))
+	}
+
 	s.server = grpc.NewServer(opts...)
 	return s, nil
 }
 
 func (s *gPRCServerService) Run(ctx context.Context) error {
-	s.logger.Info("Running GRPC server", "address", s.cfg.Address, "network", s.cfg.Network, "tls", s.cfg.TLSConfig != nil, "max_recv_msg_size", s.cfg.MaxRecvMsgSize, "max_send_msg_size", s.cfg.MaxSendMsgSize)
+	s.logger.Info("Running GRPC server",
+		"address", s.cfg.Address,
+		"network", s.cfg.Network,
+		"tls", s.cfg.TLSConfig != nil,
+		"max_recv_msg_size", s.cfg.MaxRecvMsgSize,
+		"max_send_msg_size", s.cfg.MaxSendMsgSize,
+		"max_connection_age", s.cfg.MaxConnectionAge,
+		"max_connection_idle", s.cfg.MaxConnectionIdle,
+		"keepalive_time", s.cfg.KeepaliveTime,
+		"keepalive_timeout", s.cfg.KeepaliveTimeout,
+		"keepalive_min_time", s.cfg.KeepaliveMinTime)
 
 	listener, err := net.Listen(s.cfg.Network, s.cfg.Address)
 	if err != nil {
@@ -119,25 +160,43 @@ func (s *gPRCServerService) Run(ctx context.Context) error {
 	s.address = listener.Addr().String()
 	close(s.startedChan)
 
-	serveErr := make(chan error, 1)
+	serveErrCh := make(chan error, 1)
 	go func() {
 		s.logger.Info("GRPC server: starting")
-		err := s.server.Serve(listener)
-		if err != nil {
+		if err := s.server.Serve(listener); err != nil {
 			s.logger.Error("GRPC server: failed to serve", "err", err)
-			serveErr <- err
+			serveErrCh <- err
 		}
 	}()
 
 	select {
-	case err := <-serveErr:
-		s.logger.Error("GRPC server: failed to serve", "err", err)
+	case err := <-serveErrCh:
 		return err
 	case <-ctx.Done():
+		// If separateShutdown is true (DSKit), shutdown is called during services.StoppingFn.
+		if !s.separateShutdown {
+			s.shutdown()
+		}
+		return nil
 	}
-	s.logger.Warn("GRPC server: shutting down")
-	s.server.Stop()
-	return ctx.Err()
+}
+
+// shutdown gracefully stops the gRPC server.
+func (s *gPRCServerService) shutdown() {
+	s.logger.Info("GRPC server: initiating graceful shutdown")
+	gracefulStopDone := make(chan struct{})
+	go func() {
+		s.server.GracefulStop()
+		close(gracefulStopDone)
+	}()
+
+	select {
+	case <-gracefulStopDone:
+		s.logger.Info("GRPC server: graceful shutdown complete")
+	case <-time.After(s.cfg.GracefulShutdownTimeout):
+		s.logger.Warn("GRPC server: graceful shutdown timed out, forcing stop")
+		s.server.Stop()
+	}
 }
 
 func (s *gPRCServerService) IsDisabled() bool {
@@ -151,4 +210,47 @@ func (s *gPRCServerService) GetServer() *grpc.Server {
 func (s *gPRCServerService) GetAddress() string {
 	<-s.startedChan
 	return s.address
+}
+
+// DSKitService is a wrapper around a dskit BasicService and a Provider.
+type DSKitService struct {
+	*services.BasicService
+	Provider
+
+	// Health is the gRPC health server registered on this service.
+	Health *HealthService
+}
+
+// ProvideDSKitService wraps a Provider into a dskit BasicService.
+func ProvideDSKitService(
+	cfg *setting.Cfg,
+	features featuremgmt.FeatureToggles,
+	tracer trace.Tracer,
+	registerer prometheus.Registerer,
+	serviceName string,
+) (*DSKitService, error) {
+	// Use a passthrough authenticator so the grpc_auth interceptor is
+	// registered. This enables per-service auth via ServiceAuthFuncOverride.
+	passthrough := interceptors.AuthenticatorFunc(func(ctx context.Context) (context.Context, error) {
+		return ctx, nil
+	})
+	grpcService, err := provideService(cfg, features, passthrough, tracer, registerer, true)
+	if err != nil {
+		return nil, err
+	}
+
+	hs := newHealthService()
+	hs.setServingStatus("", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+	grpc_health_v1.RegisterHealthServer(grpcService.GetServer(), hs)
+
+	svc := &DSKitService{Provider: grpcService, Health: hs}
+	svc.BasicService = services.NewBasicService(func(context.Context) error {
+		hs.start()
+		return nil
+	}, grpcService.Run, func(_ error) error {
+		hs.Shutdown()
+		grpcService.shutdown()
+		return nil
+	}).WithName(serviceName)
+	return svc, nil
 }

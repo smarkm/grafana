@@ -74,6 +74,8 @@ refs:
 
 This tutorial is a continuation of the [Get started with Grafana Alerting - Grouping notifications](http://www.grafana.com/tutorials/alerting-get-started-pt3/) tutorial.
 
+{{< youtube id="9CSrQGKeZwQ" >}}
+
 In this tutorial, you will learn:
 
 - The two types of templates in Grafana Alerting: labels and annotations and notification templates.
@@ -303,7 +305,7 @@ Without a notification template, the alert messages would include the default Gr
 
 1. Navigate to **Alerts & IRM** > **Alerting** > **Contact point**s.
 1. Select the **Notification Templates** tab.
-1. Click **+ Add notification template group**.
+1. Click **+ New notification template**.
 1. Enter a name. E.g `instance-cpu-summary`.
 1. From the **Add example** dropdown menu, choose `Print firing and resolved alerts`.
 

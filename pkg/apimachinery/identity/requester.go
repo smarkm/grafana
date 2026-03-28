@@ -5,7 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-jose/go-jose/v3/jwt"
+	jose "github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 	"k8s.io/apiserver/pkg/authentication/user"
 
 	claims "github.com/grafana/authlib/types"
@@ -73,6 +74,8 @@ type Requester interface {
 	// IsNil returns true if the identity is nil
 	// FIXME: remove this method once all services are using an interface
 	IsNil() bool
+	// GetAccessToken returns the access token that went into authenticating this identity. This will be empty for legacy auth mechanisms and in-process service identities.
+	GetAccessToken() string
 	// GetIDToken returns a signed token representing the identity that can be forwarded to plugins and external services.
 	GetIDToken() string
 
@@ -136,7 +139,7 @@ func IsIDTokenExpired(requester Requester) bool {
 		return false
 	}
 
-	parsed, err := jwt.ParseSigned(idToken)
+	parsed, err := jwt.ParseSigned(idToken, []jose.SignatureAlgorithm{jose.ES256})
 	if err != nil {
 		return false
 	}

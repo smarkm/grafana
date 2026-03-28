@@ -1,5 +1,6 @@
 import { Location } from 'history';
 import { ComponentType } from 'react';
+import { Params } from 'react-router-dom-v5-compat';
 
 import { UrlQueryMap } from '@grafana/data';
 
@@ -23,7 +24,7 @@ export interface RouteDescriptor {
 
   /**
    * Allow the route to be access by anonymous users.
-   * Currently only used if the `multiTenantFrontend` feature toggle is enabled.
+   * Currently only used when using the frontend-service.
    */
-  allowAnonymous?: boolean;
+  allowAnonymous?: boolean | ((params: Readonly<Params<string>>) => boolean);
 }

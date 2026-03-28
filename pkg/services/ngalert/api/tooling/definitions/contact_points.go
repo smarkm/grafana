@@ -58,8 +58,10 @@ type GooglechatIntegration struct {
 
 	URL Secret `json:"url" yaml:"url" hcl:"url"`
 
-	Title   *string `json:"title,omitempty" yaml:"title,omitempty" hcl:"title"`
-	Message *string `json:"message,omitempty" yaml:"message,omitempty" hcl:"message"`
+	Title           *string `json:"title,omitempty" yaml:"title,omitempty" hcl:"title"`
+	Message         *string `json:"message,omitempty" yaml:"message,omitempty" hcl:"message"`
+	HideOpenButton  *bool   `json:"hide_open_button,omitempty" yaml:"hide_open_button,omitempty" hcl:"hide_open_button"`
+	HideVersionInfo *bool   `json:"hide_version_info,omitempty" yaml:"hide_version_info,omitempty" hcl:"hide_version_info"`
 }
 
 type JiraIntegration struct {
@@ -325,8 +327,8 @@ type WebhookIntegration struct {
 	ExtraHeaders             *map[string]string `json:"headers,omitempty" yaml:"headers,omitempty" hcl:"headers"`
 	Title                    *string            `json:"title,omitempty" yaml:"title,omitempty" hcl:"title"`
 	Message                  *string            `json:"message,omitempty" yaml:"message,omitempty" hcl:"message"`
-	TLSConfig                *TLSConfig         `json:"tlsConfig,omitempty" yaml:"tlsConfig,omitempty" hcl:"tlsConfig,block"`
-	HMACConfig               *HMACConfig        `json:"hmacConfig,omitempty" yaml:"hmacConfig,omitempty" hcl:"hmacConfig,block"`
+	TLSConfig                *TLSConfig         `json:"tlsConfig,omitempty" yaml:"tlsConfig,omitempty" hcl:"tls_config,block"`
+	HMACConfig               *HMACConfig        `json:"hmacConfig,omitempty" yaml:"hmacConfig,omitempty" hcl:"hmac_config,block"`
 	HTTPConfig               *HTTPClientConfig  `json:"http_config,omitempty" yaml:"http_config,omitempty" hcl:"http_config,block"`
 
 	Payload *CustomPayload `json:"payload,omitempty" yaml:"payload,omitempty" hcl:"payload,block"`

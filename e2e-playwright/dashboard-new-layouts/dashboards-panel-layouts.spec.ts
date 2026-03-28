@@ -1,13 +1,11 @@
-import { Page } from 'playwright-core';
-
 import { test, expect, E2ESelectorGroups, DashboardPage } from '@grafana/plugin-e2e';
 
-import testV2Dashboard from '../dashboards/TestV2Dashboard.json';
+import { switchToAutoGrid, importTestDashboard } from './utils';
 
 test.use({
   featureToggles: {
-    kubernetesDashboards: true,
     dashboardNewLayouts: true,
+    dashboardUndoRedo: true,
     groupByVariable: true,
   },
 });
@@ -31,9 +29,9 @@ test.describe(
         dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
       ).toHaveCount(3);
 
-      await page.getByLabel('Expand Panel layout category').click();
+      await dashboardPage.getByGrafanaSelector(selectors.pages.Dashboard.Sidebar.optionsButton).click();
 
-      await page.getByLabel('Auto grid').click();
+      await switchToAutoGrid(page, dashboardPage);
 
       await expect(
         dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
@@ -49,6 +47,7 @@ test.describe(
       ).toHaveCount(3);
 
       await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
+      await dashboardPage.getByGrafanaSelector(selectors.pages.Dashboard.Sidebar.optionsButton).click();
 
       await checkAutoGridLayoutInputs(dashboardPage, selectors);
     });
@@ -62,9 +61,9 @@ test.describe(
         dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
       ).toHaveCount(3);
 
-      await page.getByLabel('Expand Panel layout category').click();
+      await dashboardPage.getByGrafanaSelector(selectors.pages.Dashboard.Sidebar.optionsButton).click();
 
-      await page.getByLabel('Auto grid').click();
+      await switchToAutoGrid(page, dashboardPage);
 
       // Get initial positions - standard width should have panels on different rows
       const firstPanelTop = await getPanelTop(dashboardPage, selectors);
@@ -97,6 +96,7 @@ test.describe(
       await page.reload();
 
       await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
+      await dashboardPage.getByGrafanaSelector(selectors.pages.Dashboard.Sidebar.optionsButton).click();
 
       await expect(
         dashboardPage.getByGrafanaSelector(
@@ -122,9 +122,9 @@ test.describe(
         dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
       ).toHaveCount(3);
 
-      await page.getByLabel('Expand Panel layout category').click();
+      await dashboardPage.getByGrafanaSelector(selectors.pages.Dashboard.Sidebar.optionsButton).click();
 
-      await page.getByLabel('Auto grid').click();
+      await switchToAutoGrid(page, dashboardPage);
 
       await dashboardPage
         .getByGrafanaSelector(selectors.components.PanelEditor.ElementEditPane.AutoGridLayout.minColumnWidth)
@@ -133,7 +133,7 @@ test.describe(
 
       await dashboardPage
         .getByGrafanaSelector(selectors.components.PanelEditor.ElementEditPane.AutoGridLayout.customMinColumnWidth)
-        .fill('900');
+        .fill('1100');
       await dashboardPage
         .getByGrafanaSelector(selectors.components.PanelEditor.ElementEditPane.AutoGridLayout.customMinColumnWidth)
         .blur();
@@ -147,12 +147,13 @@ test.describe(
       await verifyPanelsStackedVertically(dashboardPage, selectors);
 
       await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
+      await dashboardPage.getByGrafanaSelector(selectors.pages.Dashboard.Sidebar.optionsButton).click();
 
       await expect(
         dashboardPage.getByGrafanaSelector(
           selectors.components.PanelEditor.ElementEditPane.AutoGridLayout.customMinColumnWidth
         )
-      ).toHaveValue('900');
+      ).toHaveValue('1100');
 
       await verifyPanelsStackedVertically(dashboardPage, selectors);
 
@@ -179,9 +180,9 @@ test.describe(
         dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
       ).toHaveCount(3);
 
-      await page.getByLabel('Expand Panel layout category').click();
+      await dashboardPage.getByGrafanaSelector(selectors.pages.Dashboard.Sidebar.optionsButton).click();
 
-      await page.getByLabel('Auto grid').click();
+      await switchToAutoGrid(page, dashboardPage);
 
       await dashboardPage
         .getByGrafanaSelector(selectors.components.PanelEditor.ElementEditPane.AutoGridLayout.maxColumns)
@@ -197,6 +198,7 @@ test.describe(
       await verifyPanelsStackedVertically(dashboardPage, selectors);
 
       await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
+      await dashboardPage.getByGrafanaSelector(selectors.pages.Dashboard.Sidebar.optionsButton).click();
 
       await expect(
         dashboardPage.getByGrafanaSelector(selectors.components.PanelEditor.ElementEditPane.AutoGridLayout.maxColumns)
@@ -214,9 +216,9 @@ test.describe(
         dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
       ).toHaveCount(3);
 
-      await page.getByLabel('Expand Panel layout category').click();
+      await dashboardPage.getByGrafanaSelector(selectors.pages.Dashboard.Sidebar.optionsButton).click();
 
-      await page.getByLabel('Auto grid').click();
+      await switchToAutoGrid(page, dashboardPage);
 
       const regularRowHeight = await getPanelHeight(dashboardPage, selectors);
 
@@ -249,6 +251,7 @@ test.describe(
       }).toPass();
 
       await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
+      await dashboardPage.getByGrafanaSelector(selectors.pages.Dashboard.Sidebar.optionsButton).click();
 
       await expect(
         dashboardPage.getByGrafanaSelector(selectors.components.PanelEditor.ElementEditPane.AutoGridLayout.rowHeight)
@@ -269,9 +272,9 @@ test.describe(
         dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
       ).toHaveCount(3);
 
-      await page.getByLabel('Expand Panel layout category').click();
+      await dashboardPage.getByGrafanaSelector(selectors.pages.Dashboard.Sidebar.optionsButton).click();
 
-      await page.getByLabel('Auto grid').click();
+      await switchToAutoGrid(page, dashboardPage);
 
       const regularRowHeight = await getPanelHeight(dashboardPage, selectors);
 
@@ -302,6 +305,7 @@ test.describe(
       }).toPass();
 
       await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
+      await dashboardPage.getByGrafanaSelector(selectors.pages.Dashboard.Sidebar.optionsButton).click();
 
       await expect(
         dashboardPage.getByGrafanaSelector(
@@ -326,9 +330,9 @@ test.describe(
         dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
       ).toHaveCount(3);
 
-      await page.getByLabel('Expand Panel layout category').click();
+      await dashboardPage.getByGrafanaSelector(selectors.pages.Dashboard.Sidebar.optionsButton).click();
 
-      await page.getByLabel('Auto grid').click();
+      await switchToAutoGrid(page, dashboardPage);
 
       // Set narrow column width first to ensure panels fit horizontally
       await dashboardPage
@@ -356,6 +360,7 @@ test.describe(
       }).toPass();
 
       await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
+      await dashboardPage.getByGrafanaSelector(selectors.pages.Dashboard.Sidebar.optionsButton).click();
 
       await expect(
         dashboardPage.getByGrafanaSelector(selectors.components.PanelEditor.ElementEditPane.AutoGridLayout.fillScreen)
@@ -370,21 +375,6 @@ test.describe(
 );
 
 // Helper functions
-async function importTestDashboard(page: Page, selectors: E2ESelectorGroups, title: string) {
-  await page.goto(selectors.pages.ImportDashboard.url);
-  await page.getByTestId(selectors.components.DashboardImportPage.textarea).fill(JSON.stringify(testV2Dashboard));
-  await page.getByTestId(selectors.components.DashboardImportPage.submit).click();
-  await page.getByTestId(selectors.components.ImportDashboardForm.name).fill(title);
-  await page.getByTestId(selectors.components.DataSourcePicker.inputV2).click();
-  await page.locator('div[data-testid="data-source-card"]').first().click();
-  await page.getByTestId(selectors.components.ImportDashboardForm.submit).click();
-  const undockMenuButton = page.locator('[aria-label="Undock menu"]');
-  const undockMenuVisible = await undockMenuButton.isVisible();
-  if (undockMenuVisible) {
-    undockMenuButton.click();
-  }
-}
-
 async function saveDashboard(dashboardPage: DashboardPage, selectors: E2ESelectorGroups) {
   await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.saveButton).click();
   await dashboardPage.getByGrafanaSelector(selectors.components.Drawer.DashboardSaveDrawer.saveButton).click();

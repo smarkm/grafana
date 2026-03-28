@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/grafana/grafana/pkg/events"
 	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
@@ -63,13 +62,6 @@ func (ss *sqlStore) Insert(ctx context.Context, cmd *user.User) (int64, error) {
 		if _, err = sess.Insert(cmd); err != nil {
 			return err
 		}
-		sess.PublishAfterCommit(&events.UserCreated{
-			Timestamp: cmd.Created,
-			Id:        cmd.ID,
-			Name:      cmd.Name,
-			Login:     cmd.Login,
-			Email:     cmd.Email,
-		})
 		return nil
 	})
 
@@ -293,14 +285,6 @@ func (ss *sqlStore) Update(ctx context.Context, cmd *user.UpdateUserCommand) err
 				return err
 			}
 		}
-
-		sess.PublishAfterCommit(&events.UserUpdated{
-			Timestamp: usr.Created,
-			Id:        usr.ID,
-			Name:      usr.Name,
-			Login:     usr.Login,
-			Email:     usr.Email,
-		})
 
 		return nil
 	})
@@ -557,7 +541,7 @@ func (ss *sqlStore) Search(ctx context.Context, query *user.SearchUsersQuery) (*
 			sess.Limit(query.Limit, offset)
 		}
 
-		sess.Cols("u.id", "u.uid", "u.email", "u.name", "u.login", "u.is_admin", "u.is_disabled", "u.last_seen_at", "user_auth.auth_module", "u.is_provisioned")
+		sess.Cols("u.id", "u.uid", "u.email", "u.name", "u.login", "u.is_admin", "u.is_disabled", "u.last_seen_at", "user_auth.auth_module", "u.is_provisioned", "u.created")
 
 		if len(query.SortOpts) > 0 {
 			for i := range query.SortOpts {

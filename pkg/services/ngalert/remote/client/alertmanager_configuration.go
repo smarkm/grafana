@@ -7,8 +7,7 @@ import (
 	"net/http"
 
 	"github.com/grafana/alerting/definition"
-
-	apimodels "github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
+	alertingmodels "github.com/grafana/alerting/models"
 )
 
 const (
@@ -29,6 +28,10 @@ func (u *GrafanaAlertmanagerConfig) MarshalJSON() ([]byte, error) {
 	return definition.MarshalJSONWithSecrets((*cfg)(u))
 }
 
+type RuntimeConfig struct {
+	DispatchTimer string `json:"dispatch_timer"`
+}
+
 type UserGrafanaConfig struct {
 	GrafanaAlertmanagerConfig GrafanaAlertmanagerConfig `json:"configuration"`
 	Hash                      string                    `json:"configuration_hash"`
@@ -37,10 +40,7 @@ type UserGrafanaConfig struct {
 	Promoted                  bool                      `json:"promoted"`
 	ExternalURL               string                    `json:"external_url"`
 	SmtpConfig                SmtpConfig                `json:"smtp_config"`
-}
-
-func (mc *Mimir) ShouldPromoteConfig() bool {
-	return mc.promoteConfig
+	RuntimeConfig             RuntimeConfig             `json:"runtime_config"`
 }
 
 func (mc *Mimir) GetGrafanaAlertmanagerConfig(ctx context.Context) (*UserGrafanaConfig, error) {
@@ -62,16 +62,8 @@ func (mc *Mimir) GetGrafanaAlertmanagerConfig(ctx context.Context) (*UserGrafana
 	return gc, nil
 }
 
-func (mc *Mimir) CreateGrafanaAlertmanagerConfig(ctx context.Context, cfg GrafanaAlertmanagerConfig, hash string, createdAt int64, isDefault bool) error {
-	payload, err := definition.MarshalJSONWithSecrets(&UserGrafanaConfig{
-		GrafanaAlertmanagerConfig: cfg,
-		Hash:                      hash,
-		CreatedAt:                 createdAt,
-		Default:                   isDefault,
-		Promoted:                  mc.promoteConfig,
-		ExternalURL:               mc.externalURL,
-		SmtpConfig:                mc.smtpConfig,
-	})
+func (mc *Mimir) CreateGrafanaAlertmanagerConfig(ctx context.Context, cfg *UserGrafanaConfig) error {
+	payload, err := definition.MarshalJSONWithSecrets(cfg)
 	if err != nil {
 		return err
 	}
@@ -83,8 +75,8 @@ func (mc *Mimir) DeleteGrafanaAlertmanagerConfig(ctx context.Context) error {
 	return mc.doOK(ctx, grafanaAlertmanagerConfigPath, http.MethodDelete, nil)
 }
 
-func (mc *Mimir) GetReceivers(ctx context.Context) ([]apimodels.Receiver, error) {
-	response := []apimodels.Receiver{}
+func (mc *Mimir) GetReceivers(ctx context.Context) ([]alertingmodels.ReceiverStatus, error) {
+	response := []alertingmodels.ReceiverStatus{}
 
 	// nolint:bodyclose
 	// closed within `do`

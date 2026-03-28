@@ -24,7 +24,6 @@ export function ExplainScorePopup({ name, explain, frame, row }: Props) {
   const modalHeader = (
     <ModalTabsHeader
       title={name}
-      icon={'info'}
       tabs={tabs}
       activeTab={activeTab}
       onChangeTab={(t) => {
@@ -34,7 +33,14 @@ export function ExplainScorePopup({ name, explain, frame, row }: Props) {
   );
 
   return (
-    <Modal title={modalHeader} isOpen={isOpen} onDismiss={() => setOpen(false)} closeOnBackdropClick closeOnEscape>
+    <Modal
+      ariaLabel={name}
+      title={modalHeader}
+      isOpen={isOpen}
+      onDismiss={() => setOpen(false)}
+      closeOnBackdropClick
+      closeOnEscape
+    >
       <TabContent>
         {activeTab === tabs[0].value && (
           <CodeEditor

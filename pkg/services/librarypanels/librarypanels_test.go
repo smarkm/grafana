@@ -14,7 +14,6 @@ import (
 	"github.com/grafana/grafana/pkg/components/simplejson"
 	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/infra/tracing"
-	"github.com/grafana/grafana/pkg/kinds/librarypanel"
 	"github.com/grafana/grafana/pkg/services/accesscontrol/actest"
 	"github.com/grafana/grafana/pkg/services/dashboards"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
@@ -29,6 +28,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/services/user/userimpl"
 	"github.com/grafana/grafana/pkg/tests/testsuite"
+	"github.com/grafana/grafana/pkg/util/testutil"
 )
 
 const userInDbName = "user_in_db"
@@ -40,9 +40,8 @@ func TestMain(m *testing.M) {
 }
 
 func TestIntegrationConnectLibraryPanelsForDashboard(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	scenarioWithLibraryPanel(t, "When an admin tries to store a dashboard with a library panel, it should connect the two",
 		func(t *testing.T, sc scenarioContext) {
 			dashJSON := map[string]any{
@@ -86,6 +85,31 @@ func TestIntegrationConnectLibraryPanelsForDashboard(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, elements, 1)
 			require.Equal(t, sc.initialResult.Result.UID, elements[sc.initialResult.Result.UID].UID)
+		})
+
+	scenarioWithLibraryPanel(t, "When an admin tries to store a V2 dashboard with a library panel, it should connect the two",
+		func(t *testing.T, sc scenarioContext) {
+			dashJSON := map[string]any{
+				"elements": []any{
+					map[string]any{
+						"kind": "Panel",
+						"spec": map[string]any{
+							"datasource": "${DS_GDEV-TESTDATA}",
+							"libraryPanel": map[string]any{
+								"uid": sc.initialResult.Result.UID,
+							},
+						},
+					},
+				},
+			}
+			dash := dashboards.Dashboard{
+				Title: "Testing ConnectLibraryPanelsForDashboard for V2 dashboard",
+				Data:  simplejson.NewFromAny(dashJSON),
+			}
+			dashInDB := createDashboard(t, sc, &dash)
+
+			err := sc.service.ConnectLibraryPanelsForDashboard(sc.ctx, sc.user, dashInDB)
+			require.NoError(t, err)
 		})
 
 	scenarioWithLibraryPanel(t, "When an admin tries to store a dashboard with library panels inside and outside of rows, it should connect all",
@@ -336,9 +360,8 @@ func TestIntegrationConnectLibraryPanelsForDashboard(t *testing.T) {
 }
 
 func TestIntegrationImportLibraryPanelsForDashboard(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	testScenario(t, "When an admin tries to import a dashboard with a library panel that does not exist, it should import the library panel",
 		func(t *testing.T, sc scenarioContext) {
 			var missingUID = "jL6MrxCMz"
@@ -657,12 +680,12 @@ func toLibraryElement(t *testing.T, res model.LibraryElementDTO) libraryElement 
 			ConnectedDashboards: res.Meta.ConnectedDashboards,
 			Created:             res.Meta.Created,
 			Updated:             res.Meta.Updated,
-			CreatedBy: librarypanel.LibraryElementDTOMetaUser{
+			CreatedBy: model.LibraryElementDTOMetaUser{
 				Id:        res.Meta.CreatedBy.Id,
 				Name:      res.Meta.CreatedBy.Name,
 				AvatarUrl: res.Meta.CreatedBy.AvatarUrl,
 			},
-			UpdatedBy: librarypanel.LibraryElementDTOMetaUser{
+			UpdatedBy: model.LibraryElementDTOMetaUser{
 				Id:        res.Meta.UpdatedBy.Id,
 				Name:      res.Meta.UpdatedBy.Name,
 				AvatarUrl: res.Meta.UpdatedBy.AvatarUrl,
@@ -695,12 +718,12 @@ func getExpected(t *testing.T, res model.LibraryElementDTO, UID string, name str
 			ConnectedDashboards: 0,
 			Created:             res.Meta.Created,
 			Updated:             res.Meta.Updated,
-			CreatedBy: librarypanel.LibraryElementDTOMetaUser{
+			CreatedBy: model.LibraryElementDTOMetaUser{
 				Id:        1,
 				Name:      userInDbName,
 				AvatarUrl: userInDbAvatar,
 			},
-			UpdatedBy: librarypanel.LibraryElementDTOMetaUser{
+			UpdatedBy: model.LibraryElementDTOMetaUser{
 				Id:        1,
 				Name:      userInDbName,
 				AvatarUrl: userInDbAvatar,
@@ -818,7 +841,7 @@ func testScenario(t *testing.T, desc string, fn func(t *testing.T, sc scenarioCo
 		require.NoError(t, err)
 		usrSvc, err := userimpl.ProvideService(
 			sqlStore, orgSvc, cfg, nil, nil, tracing.InitializeTracerForTest(),
-			quotaService, supportbundlestest.NewFakeBundleService(),
+			quotaService, supportbundlestest.NewFakeBundleService(), nil,
 		)
 		require.NoError(t, err)
 		_, err = usrSvc.Create(context.Background(), &cmd)

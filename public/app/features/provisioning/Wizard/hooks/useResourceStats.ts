@@ -5,9 +5,80 @@ import { t } from '@grafana/i18n';
 import {
   GetRepositoryFilesApiResponse,
   GetResourceStatsApiResponse,
+  ManagerStats,
+  RepositoryView,
+  ResourceCount,
   useGetRepositoryFilesQuery,
   useGetResourceStatsQuery,
 } from 'app/api/clients/provisioning/v0alpha1';
+import { ManagerKind } from 'app/features/apiserver/types';
+
+export type UseResourceStatsOptions = {
+  isHealthy?: boolean; // true only when healthy AND reconciled
+  healthStatusNotReady?: boolean; // true when waiting for reconciliation
+};
+
+function getManagedCount(managed?: ManagerStats[]) {
+  let totalCount = 0;
+
+  // Loop through each managed repository
+  managed?.forEach((manager) => {
+    if (manager.kind === ManagerKind.Repo) {
+      // Loop through stats inside each manager and sum up the counts
+      manager.stats.forEach((stat) => {
+        if (stat.group === 'folder.grafana.app' || stat.group === 'dashboard.grafana.app') {
+          totalCount += stat.count;
+        }
+      });
+    }
+  });
+
+  return totalCount;
+}
+
+function getResourceCount(stats?: ResourceCount[], managed?: ManagerStats[]) {
+  let counts: string[] = [];
+  let resourceCount = 0;
+
+  stats?.forEach((stat) => {
+    switch (stat.group) {
+      case 'folders':
+      case 'folder.grafana.app':
+        resourceCount += stat.count;
+        counts.push(t('provisioning.bootstrap-step.folders-count', '{{count}} folder', { count: stat.count }));
+        break;
+      case 'dashboard.grafana.app':
+        resourceCount += stat.count;
+        counts.push(t('provisioning.bootstrap-step.dashboards-count', '{{count}} dashboard', { count: stat.count }));
+        break;
+    }
+  });
+
+  managed?.forEach((manager) => {
+    if (manager.kind !== ManagerKind.Repo) {
+      manager.stats.forEach((stat) => {
+        switch (stat.group) {
+          case 'folders':
+          case 'folder.grafana.app':
+            resourceCount += stat.count;
+            counts.push(t('provisioning.bootstrap-step.folders-count', '{{count}} folder', { count: stat.count }));
+            break;
+          case 'dashboard.grafana.app':
+            resourceCount += stat.count;
+            counts.push(
+              t('provisioning.bootstrap-step.dashboards-count', '{{count}} dashboard', { count: stat.count })
+            );
+            break;
+        }
+      });
+    }
+  });
+
+  return {
+    counts,
+    resourceCount,
+  };
+}
 
 /**
  * Calculates resource statistics from API responses
@@ -22,22 +93,7 @@ function getResourceStats(files?: GetRepositoryFilesApiResponse, stats?: GetReso
     return isSupportedFile(path);
   }).length;
 
-  let counts: string[] = [];
-  let resourceCount = 0;
-
-  stats?.instance?.forEach((stat) => {
-    switch (stat.group) {
-      case 'folders':
-      case 'folder.grafana.app':
-        resourceCount += stat.count;
-        counts.push(t('provisioning.bootstrap-step.folders-count', '{{count}} folder', { count: stat.count }));
-        break;
-      case 'dashboard.grafana.app':
-        resourceCount += stat.count;
-        counts.push(t('provisioning.bootstrap-step.dashboards-count', '{{count}} dashboard', { count: stat.count }));
-        break;
-    }
-  });
+  const { counts, resourceCount } = getResourceCount(stats?.instance);
 
   return {
     fileCount,
@@ -49,19 +105,44 @@ function getResourceStats(files?: GetRepositoryFilesApiResponse, stats?: GetReso
 /**
  * Hook that provides resource statistics and sync logic
  */
-export function useResourceStats(repoName?: string, isLegacyStorage?: boolean) {
-  const resourceStatsQuery = useGetResourceStatsQuery(repoName ? undefined : skipToken);
-  const filesQuery = useGetRepositoryFilesQuery(repoName ? { name: repoName } : skipToken);
 
-  const isLoading = resourceStatsQuery.isLoading || filesQuery.isLoading;
+// TODO: update params to be object
+export function useResourceStats(
+  repoName?: string,
+  syncTarget?: RepositoryView['target'],
+  migrateResources?: boolean,
+  options?: UseResourceStatsOptions
+) {
+  const { isHealthy, healthStatusNotReady } = options || {};
+
+  const resourceStatsQuery = useGetResourceStatsQuery(repoName ? undefined : skipToken);
+  // isHealthy already includes reconciliation check - safe to fetch files
+  const filesQuery = useGetRepositoryFilesQuery(repoName && isHealthy ? { name: repoName } : skipToken, {
+    refetchOnMountOrArgChange: true,
+  });
+
+  const isLoading = resourceStatsQuery.isFetching || filesQuery.isFetching || Boolean(healthStatusNotReady);
 
   const { resourceCount, resourceCountString, fileCount } = useMemo(
     () => getResourceStats(filesQuery.data, resourceStatsQuery.data),
     [filesQuery.data, resourceStatsQuery.data]
   );
 
-  const requiresMigration = isLegacyStorage || resourceCount > 0;
-  const shouldSkipSync = !requiresMigration && resourceCount === 0 && fileCount === 0;
+  const { managedCount, unmanagedCount } = useMemo(() => {
+    return {
+      // managed does not exist in response when first time connecting to a repo
+      managedCount: getManagedCount(resourceStatsQuery.data?.managed),
+      // "unmanaged" means unmanaged by git sync. it may still be managed by other means, like terraform, plugins, file provisioning, etc.
+      unmanagedCount: getResourceCount(resourceStatsQuery.data?.unmanaged, resourceStatsQuery.data?.managed)
+        .resourceCount,
+    };
+  }, [resourceStatsQuery.data]);
+
+  // Calculate requiresMigration based on sync target and user selection
+  // For instance sync: migrate if there are resources (checkbox is disabled and always true)
+  // For folder sync: only migrate if user explicitly opts in via checkbox
+  const requiresMigration = syncTarget === 'instance' ? resourceCount > 0 : (migrateResources ?? false);
+  const shouldSkipSync = (resourceCount === 0 || syncTarget === 'folder') && fileCount === 0;
 
   // Format display strings
   const resourceCountDisplay =
@@ -72,6 +153,8 @@ export function useResourceStats(repoName?: string, isLegacyStorage?: boolean) {
       : t('provisioning.bootstrap-step.empty', 'Empty');
 
   return {
+    managedCount,
+    unmanagedCount,
     resourceCount,
     resourceCountString: resourceCountDisplay,
     fileCount,

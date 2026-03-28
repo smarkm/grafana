@@ -1,32 +1,51 @@
+import { memo } from 'react';
+
 import { t } from '@grafana/i18n';
 import { Badge, Stack } from '@grafana/ui';
-import { useGetResourceRepositoryView } from 'app/features/provisioning/hooks/useGetResourceRepositoryView';
+import { ManagerKind } from 'app/features/apiserver/types';
+import {
+  RepoViewStatus,
+  useGetResourceRepositoryView,
+} from 'app/features/provisioning/hooks/useGetResourceRepositoryView';
 import { useIsProvisionedInstance } from 'app/features/provisioning/hooks/useIsProvisionedInstance';
-import { getReadOnlyTooltipText } from 'app/features/provisioning/utils/repository';
-import { NestedFolderDTO } from 'app/features/search/service/types';
-import { FolderDTO, FolderListItemDTO } from 'app/types/folders';
+import { getManagedByRepositoryTooltip, getReadOnlyTooltipText } from 'app/features/provisioning/utils/tooltip';
+import { DashboardViewItem } from 'app/features/search/types';
+import { FolderDTO } from 'app/types/folders';
 
 export interface Props {
-  folder?: FolderListItemDTO | NestedFolderDTO | FolderDTO;
+  folder?: FolderDTO | DashboardViewItem;
 }
 
-export function FolderRepo({ folder }: Props) {
-  // skip rendering if:
-  // folder is not present
-  // folder have parentUID
-  // folder is not managed
-  // if whole instance is provisioned
-  const isProvisionedInstance = useIsProvisionedInstance();
-  const skipRender =
-    !folder || ('parentUID' in folder && folder.parentUID) || !folder.managedBy || isProvisionedInstance;
+export const FolderRepo = memo(function FolderRepo({ folder }: Props) {
+  // Check if we can skip early without needing the useIsProvisionedInstance query
+  // This reduces RTK Query subscriptions and prevents re-render loops on API errors
+  const canSkipEarly = getCanSkipEarly(folder);
 
-  const { isReadOnlyRepo, repoType } = useGetResourceRepositoryView({
+  const isProvisionedInstance = useIsProvisionedInstance({ skip: canSkipEarly });
+  const skipRender = canSkipEarly || isProvisionedInstance;
+
+  const { isReadOnlyRepo, repoType, repository, status } = useGetResourceRepositoryView({
     folderName: skipRender ? undefined : folder?.uid,
+    skipQuery: skipRender,
   });
 
   if (skipRender) {
     return null;
   }
+
+  const isOrphaned = status === RepoViewStatus.Orphaned;
+
+  if (isOrphaned) {
+    return (
+      <Badge
+        color="orange"
+        icon="exclamation-triangle"
+        tooltip={t('folder-repo.repository-not-found-tooltip', 'Repository not found')}
+      />
+    );
+  }
+
+  const repoTooltipText = getManagedByRepositoryTooltip(repository?.title || repository?.name);
 
   return (
     // badge with text and icon only has different height, we will need to adjust the layout using stretch
@@ -38,7 +57,24 @@ export function FolderRepo({ folder }: Props) {
           tooltip={getReadOnlyTooltipText({ isLocal: repoType === 'local' })}
         />
       )}
-      <Badge color="purple" icon="exchange-alt" tooltip={t('folder-repo.provisioned-badge', 'Provisioned')} />
+      <Badge color="purple" icon="exchange-alt" tooltip={repoTooltipText} />
     </Stack>
   );
+});
+
+// Check conditions that don't require the useIsProvisionedInstance hook
+function getCanSkipEarly(folder: FolderDTO | DashboardViewItem | undefined): boolean {
+  if (!folder) {
+    return true;
+  }
+  // Skip render if parentUID is present - we only display icon for root folders
+  const hasParent = Boolean('parentUID' in folder && folder.parentUID);
+  if (hasParent) {
+    return true;
+  }
+  const isNotManaged = folder.managedBy !== ManagerKind.Repo;
+  if (isNotManaged) {
+    return true;
+  }
+  return false;
 }

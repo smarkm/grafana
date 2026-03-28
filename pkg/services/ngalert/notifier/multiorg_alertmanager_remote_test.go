@@ -60,14 +60,14 @@ func TestMultiorgAlertmanager_RemoteSecondaryMode(t *testing.T) {
 	}
 	secretsService := secretsManager.SetupTestService(t, fakes.NewFakeSecretsStore())
 	override := remote.NewRemoteSecondaryFactory(remoteAMCfg,
-		notifier.NewFileStore(remoteAMCfg.OrgID, kvStore),
+		kvStore,
 		configStore,
 		10*time.Second,
 		notifier.NewCrypto(secretsService, configStore, log.NewNopLogger()),
-		remote.NoopAutogenFn,
 		m.GetRemoteAlertmanagerMetrics(),
 		tracing.InitializeTracerForTest(),
 		false,
+		featuremgmt.WithFeatures(),
 	)
 
 	cfg := &setting.Cfg{
@@ -134,7 +134,7 @@ func TestMultiorgAlertmanager_RemoteSecondaryMode(t *testing.T) {
 		lastConfig = fakeAM.config
 	}
 
-	// It should send config and state on shutdown.
+	// It should send state on shutdown.
 	{
 		// Let's change the configuration and state again.
 		require.NoError(t, configStore.SaveAlertmanagerConfiguration(ctx, &models.SaveAlertmanagerConfigurationCmd{
@@ -144,10 +144,10 @@ func TestMultiorgAlertmanager_RemoteSecondaryMode(t *testing.T) {
 			LastApplied:               time.Now().Unix(),
 		}))
 
-		// Both state and config should be updated when shutting the Alertmanager down.
+		// State should be updated when shutting the Alertmanager down.
 		moa.StopAndWait()
 		require.Eventually(t, func() bool {
-			return fakeAM.config != lastConfig && fakeAM.state != lastState
+			return fakeAM.state != lastState
 		}, 15*time.Second, 300*time.Millisecond)
 	}
 }

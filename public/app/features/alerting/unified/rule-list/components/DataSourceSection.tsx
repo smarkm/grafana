@@ -12,7 +12,7 @@ import { Spacer } from '../../components/Spacer';
 import { WithReturnButton } from '../../components/WithReturnButton';
 import { isAdmin, stringifyErrorLike } from '../../utils/misc';
 
-import { DataSourceIcon } from './Namespace';
+import { DataSourceIcon } from './DataSourceIcon';
 import { LoadingIndicator } from './RuleGroup';
 
 export interface DataSourceSectionProps extends PropsWithChildren {
@@ -114,5 +114,6 @@ const getStyles = (theme: GrafanaTheme2, isCollapsed = false) => ({
   dataSourceSectionTitle: css({
     background: theme.colors.background.secondary,
     padding: theme.spacing(1, 1.5),
+    borderRadius: theme.shape.radius.default,
   }),
 });

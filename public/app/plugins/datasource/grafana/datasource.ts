@@ -13,24 +13,24 @@ import {
   isValidLiveChannelAddress,
   MutableDataFrame,
   parseLiveChannelAddress,
-  toDataFrame,
   dataFrameFromJSON,
   LoadingState,
 } from '@grafana/data';
 import {
   DataSourceWithBackend,
-  getBackendSrv,
   getDataSourceSrv,
   getGrafanaLiveSrv,
   getTemplateSrv,
   StreamingFrameOptions,
 } from '@grafana/runtime';
 import { DataSourceRef } from '@grafana/schema';
+import { annotationServer } from 'app/features/annotations/api';
 import { migrateDatasourceNameToRef } from 'app/features/dashboard/state/DashboardMigrator';
 
 import { getDashboardSrv } from '../../../features/dashboard/services/DashboardSrv';
 
 import AnnotationQueryEditor from './components/AnnotationQueryEditor';
+import { randomWalk } from './randomWalk';
 import { doTimeRegionQuery } from './timeRegions';
 import { GrafanaAnnotationQuery, GrafanaAnnotationType, GrafanaQuery, GrafanaQueryType } from './types';
 
@@ -143,10 +143,14 @@ export class GrafanaDatasource extends DataSourceWithBackend<GrafanaQuery> {
             buffer,
           })
         );
+      } else if (target.queryType === GrafanaQueryType.RandomWalk || !target.queryType) {
+        results.push(
+          of({
+            data: randomWalk(target, request),
+            state: LoadingState.Done,
+          })
+        );
       } else {
-        if (!target.queryType) {
-          target.queryType = GrafanaQueryType.RandomWalk;
-        }
         targets.push(target);
       }
     }
@@ -241,12 +245,11 @@ export class GrafanaDatasource extends DataSourceWithBackend<GrafanaQuery> {
       params.tags = tags;
     }
 
-    const annotations = await getBackendSrv().get(
-      '/api/annotations',
+    const df = await annotationServer().query(
       params,
       `grafana-data-source-annotations-${annotation.name}-${options.dashboard?.uid}`
     );
-    return { data: [toDataFrame(annotations)] };
+    return { data: [df] };
   }
 
   testDatasource(): Promise<TestDataSourceResponse> {

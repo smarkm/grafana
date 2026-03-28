@@ -34,6 +34,11 @@ interface StyleDeps {
   width?: number;
 }
 
+/**
+ * Used for regular text input. For an array of data or tree-structured data, consider using `Combobox` or `Cascader` respectively.
+ *
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/inputs-input--docs
+ */
 export const Input = forwardRef<HTMLInputElement, Props>((props, ref) => {
   const {
     className,
@@ -90,6 +95,14 @@ export const Input = forwardRef<HTMLInputElement, Props>((props, ref) => {
           ref={ref}
           className={styles.input}
           {...restProps}
+          onWheel={
+            restProps.type === 'number'
+              ? (e) => {
+                  e.currentTarget.blur();
+                  restProps.onWheel?.(e);
+                }
+              : restProps.onWheel
+          }
           style={{
             paddingLeft: prefix ? prefixRect.width + 12 : undefined,
             paddingRight: suffix || loading ? suffixRect.width + 12 : undefined,

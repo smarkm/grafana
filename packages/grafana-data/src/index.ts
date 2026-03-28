@@ -50,6 +50,8 @@ export {
   isTimeSeriesField,
   getRowUniqueId,
   addRow,
+  alignTimeRangeCompareData,
+  shouldAlignTimeCompare,
 } from './dataframe/utils';
 export {
   StreamingDataFrame,
@@ -148,6 +150,8 @@ export {
   applyRawFieldOverrides,
   useFieldOverrides,
   getFieldDataContextClone,
+  DataLinksContext,
+  useDataLinksContext,
 } from './field/fieldOverrides';
 export { getFieldDisplayValuesProxy } from './field/getFieldDisplayValuesProxy';
 export {
@@ -247,7 +251,16 @@ export {
   CSVReader,
   toCSV,
 } from './utils/csv';
-export { parseLabels, findCommonLabels, findUniqueLabels, matchAllLabels, formatLabels } from './utils/labels';
+export {
+  parseLabels,
+  findCommonLabels,
+  findUniqueLabels,
+  matchAllLabels,
+  formatLabels,
+  extractFacetedLabels,
+  resolveFacetedFilterNames,
+  FIELD_NAME_FACET_KEY,
+} from './utils/labels';
 export { roundDecimals, guessDecimals } from './utils/numbers';
 export { objRemoveUndefined, isEmptyObject } from './utils/object';
 export { classicColors } from './utils/namedColorsPalette';
@@ -431,6 +444,7 @@ export {
   isStandardFieldProp,
   type OptionDefaults,
 } from './panel/getPanelOptionsWithDefaults';
+export { type PanelDataSummary, getPanelDataSummary } from './panel/suggestions/getPanelDataSummary';
 export { createFieldConfigRegistry } from './panel/registryFactories';
 export { type QueryRunner, type QueryRunnerOptions } from './types/queryRunner';
 export { type GroupingToMatrixTransformerOptions } from './transformations/transformers/groupingToMatrix';
@@ -439,6 +453,15 @@ export {
   type DataSourcePluginContextType,
   PluginContext,
 } from './context/plugins/PluginContext';
+export {
+  type RestrictedGrafanaApisContextType,
+  type RestrictedGrafanaApisAllowList,
+  type DashboardMutationAPI,
+  type DashboardMutationResult,
+  RestrictedGrafanaApisContext,
+  RestrictedGrafanaApisContextProvider,
+  useRestrictedGrafanaApis,
+} from './context/plugins/RestrictedGrafanaApis';
 export { type PluginContextProviderProps, PluginContextProvider } from './context/plugins/PluginContextProvider';
 export {
   type DataSourcePluginContextProviderProps,
@@ -509,6 +532,7 @@ export {
   VariableRefresh,
   VariableSort,
   VariableHide,
+  type VariableRegexApplyTo,
   type VariableType,
   type VariableModel,
   type TypedVariableModel,
@@ -522,6 +546,7 @@ export {
   type QueryVariableModel,
   type TextBoxVariableModel,
   type ConstantVariableModel,
+  type SwitchVariableModel,
   type VariableWithMultiSupport,
   type VariableWithOptions,
   type DashboardProps,
@@ -561,6 +586,8 @@ export type { FeatureToggles } from './types/featureToggles.gen';
 export {
   PluginExtensionTypes,
   PluginExtensionPoints,
+  PluginExtensionExposedComponents,
+  PluginExtensionPointPatterns,
   type PluginExtension,
   type PluginExtensionLink,
   type PluginExtensionComponent,
@@ -581,9 +608,12 @@ export {
   type PluginExtensionAddedLinkConfig,
   type PluginExtensionAddedFunctionConfig,
   type PluginExtensionResourceAttributesContext,
+  type CentralAlertHistorySceneV1Props,
 } from './types/pluginExtensions';
+export { type PrometheusQueryResultsV1Props } from './types/exposedComponentProps';
 export {
   type ScopeDashboardBindingSpec,
+  type ScopeDashboardBindingStatus,
   type ScopeDashboardBinding,
   type ScopeFilterOperator,
   type ScopeSpecFilter,
@@ -634,13 +664,7 @@ export {
   type PanelMenuItem,
   type AngularPanelMenuItem,
   type PanelPluginDataSupport,
-  type VisualizationSuggestion,
-  type PanelDataSummary,
-  type VisualizationSuggestionsSupplier,
   VizOrientation,
-  VisualizationSuggestionScore,
-  VisualizationSuggestionsBuilder,
-  VisualizationSuggestionsListAppender,
 } from './types/panel';
 export {
   type DataSourcePluginOptionsEditorProps,
@@ -651,6 +675,8 @@ export {
   type DataSourceConstructor,
   type DataSourceGetTagKeysOptions,
   type DataSourceGetTagValuesOptions,
+  type DataSourceGetDrilldownsApplicabilityOptions,
+  type DataSourceGetRecommendedDrilldownsOptions,
   type MetadataInspectorProps,
   type LegacyMetricFindQueryOptions,
   type QueryEditorProps,
@@ -667,11 +693,11 @@ export {
   type QueryFixAction,
   type QueryHint,
   type MetricFindValue,
-  type FiltersApplicability,
+  type DrilldownsApplicability,
+  type DrilldownRecommendation,
   type DataSourceJsonData,
   type DataSourceSettings,
   type DataSourceInstanceSettings,
-  type DataSourceSelectItem,
   type AnnotationQueryRequest,
   type HistoryItem,
   type GetTagResponse,
@@ -700,6 +726,15 @@ export {
   type ApplyFieldOverrideOptions,
   FieldConfigProperty,
 } from './types/fieldOverrides';
+export {
+  type VisualizationSuggestion,
+  type VisualizationSuggestionsSupplier,
+  type PanelPluginVisualizationSuggestion,
+  type VisualizationSuggestionsBuilder,
+  VisualizationSuggestionScore,
+  type VisualizationPresetsSupplier,
+  type VisualizationPresetsContext,
+} from './types/suggestions';
 export {
   type MatcherConfig,
   type DataTransformContext,
@@ -774,6 +809,8 @@ export {
   type LogRowContextOptions,
   LogRowContextQueryDirection,
   type DataSourceWithLogsContextSupport,
+  type DataSourceWithLogsLabelTypesSupport,
+  hasLogsLabelTypesSupport,
   hasLogsContextSupport,
   SupplementaryQueryType,
   type SupplementaryQueryOptions,
@@ -822,7 +859,6 @@ export {
   DataLinkConfigOrigin,
   SupportedTransformationType,
   type InternalDataLink,
-  type LinkTarget,
   type LinkModel,
   type LinkModelSupplier,
   VariableOrigin,
@@ -830,6 +866,7 @@ export {
   VariableSuggestionsScope,
   OneClickMode,
 } from './types/dataLink';
+export { type LinkTarget } from './types/linkTarget';
 export {
   type Action,
   type ActionModel,
@@ -841,6 +878,8 @@ export {
   defaultActionConfig,
   contentTypeOptions,
   httpMethodOptions,
+  type FetchOptions,
+  type InfinityOptions,
 } from './types/action';
 export { DataFrameType } from './types/dataFrameTypes';
 export {

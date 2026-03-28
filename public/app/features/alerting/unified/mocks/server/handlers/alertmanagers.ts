@@ -159,12 +159,6 @@ const getReceiversHandler = () =>
     return HttpResponse.json({ message: 'Not found.' }, { status: 404 });
   });
 
-const testReceiversHandler = () =>
-  http.post('/api/alertmanager/grafana/config/api/v1/receivers/test', () => {
-    // TODO: scaffold out response as needed by tests
-    return HttpResponse.json({});
-  });
-
 const getGroupsHandler = () =>
   http.get<{ datasourceUid: string }>('/api/alertmanager/:datasourceUid/api/v2/alerts/groups', () =>
     // TODO: Scaffold out response with better data as required by tests
@@ -178,7 +172,6 @@ const handlers = [
   updateAlertmanagerConfigHandler(),
   getGrafanaAlertmanagerTemplatePreview(),
   getReceiversHandler(),
-  testReceiversHandler(),
   getGroupsHandler(),
   getAlertmanagerStatusHandler(),
 ];

@@ -2,19 +2,22 @@ import { useState } from 'react';
 
 import { AppEvents } from '@grafana/data';
 import { Trans, t } from '@grafana/i18n';
-import { locationService, reportInteraction } from '@grafana/runtime';
-import { Button, Drawer, Dropdown, Icon, Menu, MenuItem } from '@grafana/ui';
-import { Permissions } from 'app/core/components/AccessControl';
-import { appEvents } from 'app/core/core';
+import { config, locationService, reportInteraction } from '@grafana/runtime';
+import { Button, Drawer, Dropdown, Icon, Menu, MenuItem, Text } from '@grafana/ui';
+import { appEvents } from 'app/core/app_events';
+import { FolderOwnerModal } from 'app/core/components/OwnerReferences/FolderOwnerModal';
+import { contextSrv } from 'app/core/services/context_srv';
 import { RepoType } from 'app/features/provisioning/Wizard/types';
+import { BulkMoveProvisionedResource } from 'app/features/provisioning/components/BulkActions/BulkMoveProvisionedResource';
 import { DeleteProvisionedFolderForm } from 'app/features/provisioning/components/Folders/DeleteProvisionedFolderForm';
-import { getReadOnlyTooltipText } from 'app/features/provisioning/utils/repository';
+import { FolderPermissions } from 'app/features/provisioning/components/Folders/MissingFolderMetadataBanner';
+import { useIsProvisionedInstance } from 'app/features/provisioning/hooks/useIsProvisionedInstance';
+import { AccessControlAction } from 'app/types/accessControl';
 import { ShowModalReactEvent } from 'app/types/events';
 import { FolderDTO } from 'app/types/folders';
 
-import { useDeleteFolderMutationFacade } from '../../../api/clients/folder/v1beta1/hooks';
+import { useDeleteFolderMutationFacade, useMoveFolderMutationFacade } from '../../../api/clients/folder/v1beta1/hooks';
 import { ManagerKind } from '../../apiserver/types';
-import { useMoveFolderMutation } from '../api/browseDashboardsAPI';
 import { getFolderPermissions } from '../permissions';
 
 import { DeleteModal } from './BrowseActions/DeleteModal';
@@ -22,6 +25,7 @@ import { MoveModal } from './BrowseActions/MoveModal';
 
 interface Props {
   folder: FolderDTO;
+  /* If the folder is managed by a provisioned repo and is read-only */
   isReadOnlyRepo?: boolean;
   repoType?: RepoType;
 }
@@ -29,18 +33,32 @@ interface Props {
 export function FolderActionsButton({ folder, repoType, isReadOnlyRepo }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [showPermissionsDrawer, setShowPermissionsDrawer] = useState(false);
+  const [showManageOwnersModal, setShowManageOwnersModal] = useState(false);
   const [showDeleteProvisionedFolderDrawer, setShowDeleteProvisionedFolderDrawer] = useState(false);
-  const [moveFolder] = useMoveFolderMutation();
-
+  const [showMoveProvisionedFolderDrawer, setShowMoveProvisionedFolderDrawer] = useState(false);
+  const [moveFolder] = useMoveFolderMutationFacade();
+  const isProvisionedInstance = useIsProvisionedInstance();
   const deleteFolder = useDeleteFolderMutationFacade();
 
-  const { canEditFolders, canDeleteFolders, canViewPermissions, canSetPermissions } = getFolderPermissions(folder);
+  const {
+    canEditFolders,
+    canDeleteFolders: canDeleteFoldersPermissions,
+    canViewPermissions,
+    canSetPermissions,
+  } = getFolderPermissions(folder);
+
   const isProvisionedFolder = folder.managedBy === ManagerKind.Repo;
+  const isProvisionedRootFolder = isProvisionedFolder && !isProvisionedInstance && folder.parentUid === undefined;
   // Can only move folders when the folder is not provisioned
-  const canMoveFolder = canEditFolders && !isProvisionedFolder;
+  const canMoveFolder = canEditFolders && !isProvisionedRootFolder && !isReadOnlyRepo;
+  // Can only delete folders when the folder has the right permission and is not provisioned root folder
+  const canDeleteFolders = canDeleteFoldersPermissions && !isProvisionedRootFolder && !isReadOnlyRepo;
+  // Show permissions only if the folder is not provisioned, or if the provisioningFolderMetadata flag is enabled
+  const canShowPermissions =
+    canViewPermissions && (!isProvisionedFolder || !!config.featureToggles.provisioningFolderMetadata);
 
   const onMove = async (destinationUID: string) => {
-    await moveFolder({ folder, destinationUID });
+    await moveFolder({ folderUID: folder.uid, destinationUID: destinationUID });
     reportInteraction('grafana_manage_dashboards_item_moved', {
       item_counts: {
         folder: 1,
@@ -116,14 +134,40 @@ export function FolderActionsButton({ folder, repoType, isReadOnlyRepo }: Props)
     setShowDeleteProvisionedFolderDrawer(true);
   };
 
+  const handleShowMoveProvisionedFolderDrawer = () => {
+    setShowMoveProvisionedFolderDrawer(true);
+  };
+
   const managePermissionsLabel = t('browse-dashboards.folder-actions-button.manage-permissions', 'Manage permissions');
-  const moveLabel = t('browse-dashboards.folder-actions-button.move', 'Move');
-  const deleteLabel = t('browse-dashboards.folder-actions-button.delete', 'Delete');
+  const manageOwnersLabel = t('manage-owner-references.manage-folder-owner', 'Manage folder owner');
+  const moveLabel = t('browse-dashboards.folder-actions-button.move', 'Move this folder');
+  const deleteLabel = t('browse-dashboards.folder-actions-button.delete', 'Delete this folder');
+
+  // If user can set permissions for the folder and read teams, they can manage folder owners
+  const showManageOwners =
+    config.featureToggles.teamFolders &&
+    canSetPermissions &&
+    contextSrv.hasPermission(AccessControlAction.ActionTeamsRead) &&
+    !isProvisionedFolder;
 
   const menu = (
     <Menu>
-      {canViewPermissions && <MenuItem onClick={() => setShowPermissionsDrawer(true)} label={managePermissionsLabel} />}
-      {canMoveFolder && <MenuItem onClick={showMoveModal} label={moveLabel} />}
+      {canShowPermissions && <MenuItem onClick={() => setShowPermissionsDrawer(true)} label={managePermissionsLabel} />}
+      {showManageOwners && (
+        <MenuItem
+          onClick={() => {
+            reportInteraction('grafana_folder_actions_manage_owners_clicked');
+            setShowManageOwnersModal(true);
+          }}
+          label={manageOwnersLabel}
+        />
+      )}
+      {canMoveFolder && !isReadOnlyRepo && (
+        <MenuItem
+          onClick={isProvisionedFolder ? handleShowMoveProvisionedFolderDrawer : showMoveModal}
+          label={moveLabel}
+        />
+      )}
       {canDeleteFolders && (
         <MenuItem
           destructive
@@ -134,18 +178,14 @@ export function FolderActionsButton({ folder, repoType, isReadOnlyRepo }: Props)
     </Menu>
   );
 
-  if (!canViewPermissions && !canMoveFolder && !canDeleteFolders) {
+  if (!canShowPermissions && !canMoveFolder && !canDeleteFolders) {
     return null;
   }
 
   return (
     <>
       <Dropdown overlay={menu} onVisibleChange={setIsOpen}>
-        <Button
-          variant="secondary"
-          disabled={isReadOnlyRepo}
-          tooltip={isReadOnlyRepo ? getReadOnlyTooltipText({ isLocal: repoType === 'local' }) : undefined}
-        >
+        <Button variant="secondary" disabled={isReadOnlyRepo && !canViewPermissions}>
           <Trans i18nKey="browse-dashboards.folder-actions-button.folder-actions">Folder actions</Trans>
           <Icon name={isOpen ? 'angle-up' : 'angle-down'} />
         </Button>
@@ -157,18 +197,52 @@ export function FolderActionsButton({ folder, repoType, isReadOnlyRepo }: Props)
           onClose={() => setShowPermissionsDrawer(false)}
           size="md"
         >
-          <Permissions resource="folders" resourceId={folder.uid} canSetPermissions={canSetPermissions} />
+          <FolderPermissions
+            folderUID={folder.uid}
+            canSetPermissions={canSetPermissions}
+            isProvisionedFolder={isProvisionedFolder}
+          />
         </Drawer>
+      )}
+      {showManageOwnersModal && (
+        <FolderOwnerModal
+          onDismiss={() => setShowManageOwnersModal(false)}
+          onSave={() => setShowManageOwnersModal(false)}
+          onCancel={() => setShowManageOwnersModal(false)}
+          isOpen={showManageOwnersModal}
+          resourceId={folder.uid}
+        />
       )}
       {showDeleteProvisionedFolderDrawer && (
         <Drawer
-          title={t('browse-dashboards.action.delete-provisioned-folder', 'Delete provisioned folder')}
+          title={
+            <Text variant="h3" element="h2">
+              {t('browse-dashboards.action.delete-provisioned-folder', 'Delete provisioned folder')}
+            </Text>
+          }
           subtitle={folder.title}
           onClose={() => setShowDeleteProvisionedFolderDrawer(false)}
         >
           <DeleteProvisionedFolderForm
             parentFolder={folder}
             onDismiss={() => setShowDeleteProvisionedFolderDrawer(false)}
+          />
+        </Drawer>
+      )}
+      {showMoveProvisionedFolderDrawer && (
+        <Drawer
+          title={
+            <Text variant="h3" element="h2">
+              {t('browse-dashboards.action.move-provisioned-folder', 'Move provisioned folder')}
+            </Text>
+          }
+          subtitle={folder.title}
+          onClose={() => setShowMoveProvisionedFolderDrawer(false)}
+        >
+          <BulkMoveProvisionedResource
+            folderUid={folder.uid}
+            selectedItems={{ dashboard: {}, folder: { [folder.uid]: true } }}
+            onDismiss={() => setShowMoveProvisionedFolderDrawer(false)}
           />
         </Drawer>
       )}

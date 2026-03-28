@@ -11,12 +11,13 @@ import {
   OneClickMode,
   ActionModel,
   ActionVariableInput,
+  ActionType,
 } from '@grafana/data';
 import { t } from '@grafana/i18n';
+import { config } from '@grafana/runtime';
 import { TooltipDisplayMode } from '@grafana/schema';
 import { ConfirmModal, VariablesInputModal } from '@grafana/ui';
 import { LayerElement } from 'app/core/components/Layers/types';
-import { config } from 'app/core/config';
 import { notFoundItem } from 'app/features/canvas/elements/notFound';
 import { DimensionContext } from 'app/features/dimensions/context';
 import {
@@ -34,7 +35,8 @@ import {
   removeStyles,
 } from 'app/plugins/panel/canvas/utils';
 
-import { getActions, getActionsDefaultField } from '../../actions/utils';
+import { reportActionTrigger } from '../../actions/analytics';
+import { getActions, getActionsDefaultField, isInfinityActionWithAuth } from '../../actions/utils';
 import { CanvasElementItem, CanvasElementOptions } from '../element';
 import { canvasElementRegistry } from '../registry';
 
@@ -640,8 +642,16 @@ export class ElementState implements LayerElement {
 
     if (this.options.links?.some((link) => link.oneClick === true)) {
       this.oneClickMode = OneClickMode.Link;
-    } else if (this.options.actions?.some((action) => action.oneClick === true)) {
-      this.oneClickMode = OneClickMode.Action;
+    } else if (
+      this.options.actions
+        ?.filter((action) => action.type === ActionType.Fetch || isInfinityActionWithAuth(action))
+        .some((action) => action.oneClick)
+    ) {
+      const scene = this.getScene();
+      const canExecuteActions = scene?.panel?.panelContext?.canExecuteActions;
+      const userCanExecuteActions = canExecuteActions?.() ?? false;
+
+      this.oneClickMode = userCanExecuteActions ? OneClickMode.Action : OneClickMode.Off;
     } else {
       this.oneClickMode = OneClickMode.Off;
     }
@@ -901,9 +911,17 @@ export class ElementState implements LayerElement {
   };
 
   getPrimaryAction = () => {
-    const config: ValueLinkConfig = { valueRowIndex: getRowIndex(this.data.field, this.getScene()!) };
+    const scene = this.getScene();
+    const canExecuteActions = scene?.panel?.panelContext?.canExecuteActions;
+    const userCanExecuteActions = canExecuteActions?.() ?? false;
+
+    if (!userCanExecuteActions) {
+      return undefined;
+    }
+
+    const config: ValueLinkConfig = { valueRowIndex: getRowIndex(this.data.field, scene!) };
     const actionsDefaultFieldConfig = { links: this.options.links ?? [], actions: this.options.actions ?? [] };
-    const frames = this.getScene()?.data?.series;
+    const frames = scene?.data?.series;
 
     if (frames) {
       const defaultField = getActionsDefaultField(actionsDefaultFieldConfig.links, actionsDefaultFieldConfig.actions);
@@ -922,7 +940,7 @@ export class ElementState implements LayerElement {
         frames[0],
         defaultField,
         scopedVars,
-        this.getScene()?.panel.props.replaceVariables!,
+        scene?.panel.props.replaceVariables!,
         actionsDefaultFieldConfig.actions,
         config
       );
@@ -1032,6 +1050,9 @@ export class ElementState implements LayerElement {
             onConfirm={() => {
               this.showActionConfirmation = false;
               action.onClick(new MouseEvent('click'), null, this.actionVars);
+              if (action.type) {
+                reportActionTrigger(action.type, true, 'canvas');
+              }
               this.forceUpdate();
             }}
             onDismiss={() => {
@@ -1069,7 +1090,7 @@ export class ElementState implements LayerElement {
     );
   };
 
-  render() {
+  renderElement() {
     const { item, div } = this;
     const scene = this.getScene();
     const isSelected = div && scene && scene.selecto && scene.selecto.getSelectedTargets().includes(div);
@@ -1087,12 +1108,7 @@ export class ElementState implements LayerElement {
           tabIndex={0}
           style={{ userSelect: 'none' }}
         >
-          <item.display
-            key={`${this.UID}/${this.revId}`}
-            config={this.options.config}
-            data={this.data}
-            isSelected={isSelected}
-          />
+          <item.display key={this.UID} config={this.options.config} data={this.data} isSelected={isSelected} />
         </div>
         {this.showActionConfirmation && this.renderActionsConfirmModal(this.getPrimaryAction())}
         {this.showActionVarsModal && this.renderVariablesInputModal(this.getPrimaryAction())}

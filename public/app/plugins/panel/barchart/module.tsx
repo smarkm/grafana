@@ -18,7 +18,8 @@ import { BarChartPanel } from './BarChartPanel';
 import { TickSpacingEditor } from './TickSpacingEditor';
 import { changeToBarChartPanelMigrationHandler } from './migrations';
 import { FieldConfig, Options, defaultFieldConfig, defaultOptions } from './panelcfg.gen';
-import { BarChartSuggestionsSupplier } from './suggestions';
+import { barchartPresetsSupplier } from './presets';
+import { barchartSuggestionsSupplier } from './suggestions';
 
 export const plugin = new PanelPlugin<Options, FieldConfig>(BarChartPanel)
   .setPanelChangeHandler(changeToBarChartPanelMigrationHandler)
@@ -254,10 +255,11 @@ export const plugin = new PanelPlugin<Options, FieldConfig>(BarChartPanel)
     });
 
     commonOptionsBuilder.addTooltipOptions(builder, false, false, optsWithHideZeros);
-    commonOptionsBuilder.addLegendOptions(builder);
-    commonOptionsBuilder.addTextSizeOptions(builder, false);
+    commonOptionsBuilder.addLegendOptions(builder, true, true);
+    commonOptionsBuilder.addTextSizeOptions(builder, { withValue: true });
   })
-  .setSuggestionsSupplier(new BarChartSuggestionsSupplier());
+  .setSuggestionsSupplier(barchartSuggestionsSupplier)
+  .setPresetsSupplier(barchartPresetsSupplier);
 
 function countNumberFields(data?: DataFrame[]): number {
   let count = 0;

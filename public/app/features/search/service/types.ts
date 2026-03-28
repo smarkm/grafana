@@ -1,6 +1,7 @@
+import { ManagedBy } from '@grafana/api-clients/rtkq/dashboard/v0alpha1';
 import { DataFrameView, SelectableValue } from '@grafana/data';
 import { TermCount } from 'app/core/components/TagFilter/TagFilter';
-import { PermissionLevelString } from 'app/types/acl';
+import { PermissionLevel } from 'app/types/acl';
 
 import { ManagerKind } from '../../apiserver/types';
 
@@ -21,26 +22,29 @@ export interface FacetField {
 
 export interface SearchQuery {
   query?: string;
-  location?: string;
+  location?: string; // folder!
   sort?: string;
   ds_uid?: string;
   ds_type?: string;
-  saved_query_uid?: string; // TODO: not implemented yet
   tags?: string[];
   kind?: string[];
   panel_type?: string;
+  createdBy?: string;
   name?: string[];
   uid?: string[];
   facet?: FacetField[];
   explain?: boolean;
+  panelTitleSearch?: boolean;
   withAllowedActions?: boolean;
   accessInfo?: boolean;
-  hasPreview?: string; // theme
   limit?: number;
+  // Used for pagination. See also offset param.
   from?: number;
   starred?: boolean;
-  permission?: PermissionLevelString;
+  permission?: PermissionLevel;
   deleted?: boolean;
+  // Same as from, but as we have 2 different searcher backends, one uses from and the other offset
+  offset?: number;
 }
 
 export interface DashboardQueryResult {
@@ -58,7 +62,13 @@ export interface DashboardQueryResult {
   // debugging fields
   score: number;
   explain: {};
-  managedBy?: ManagerKind;
+  /**
+   * Who manages this resource (e.g. provisioning). From unified search this is
+   * the full object { kind, id }; from legacy or other paths it may be just the
+   * kind string (ManagerKind). Use typeof item.managedBy === 'string' or
+   * item.managedBy?.kind when normalizing.
+   */
+  managedBy?: ManagedBy | ManagerKind;
 
   // enterprise sends extra properties through for sorting (views, errors, etc)
   [key: string]: unknown;
@@ -96,6 +106,7 @@ export interface GrafanaSearcher {
   tags: (query: SearchQuery) => Promise<TermCount[]>;
   getSortOptions: () => Promise<SelectableValue[]>;
   sortPlaceholder?: string;
+  getLocationInfo: () => Promise<Record<string, LocationInfo>>;
 
   /** Gets the default sort used for the Folder view */
   getFolderViewSort: () => string;
@@ -104,5 +115,11 @@ export interface GrafanaSearcher {
 export interface NestedFolderDTO {
   uid: string;
   title: string;
-  managedBy?: ManagerKind;
+  /**
+   * Who manages this resource (e.g. provisioning). From unified search this is
+   * the full object { kind, id }; from legacy or other paths it may be just the
+   * kind string (ManagerKind). Use typeof item.managedBy === 'string' or
+   * item.managedBy?.kind when normalizing.
+   */
+  managedBy?: ManagedBy | ManagerKind;
 }

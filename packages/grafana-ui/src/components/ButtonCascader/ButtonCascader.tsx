@@ -1,5 +1,5 @@
 import { css, cx } from '@emotion/css';
-import RCCascader, { FieldNames } from 'rc-cascader';
+import RCCascader, { FieldNames } from '@rc-component/cascader';
 import * as React from 'react';
 
 import { GrafanaTheme2 } from '@grafana/data';
@@ -28,6 +28,9 @@ export interface ButtonCascaderProps {
   hideDownIcon?: boolean;
 }
 
+/**
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/inputs-buttoncascader--docs
+ */
 export const ButtonCascader = (props: ButtonCascaderProps) => {
   const { onChange, className, loadData, icon, buttonProps, hideDownIcon, variant, disabled, ...rest } = props;
   const styles = useStyles2(getStyles);
@@ -44,7 +47,7 @@ export const ButtonCascader = (props: ButtonCascaderProps) => {
     <RCCascader
       onChange={onChangeCascader(onChange)}
       loadData={onLoadDataCascader(loadData)}
-      dropdownClassName={cx(cascaderStyles.dropdown, styles.popup)}
+      popupClassName={cx(cascaderStyles.dropdown, styles.popup)}
       {...rest}
       expandIcon={null}
     >

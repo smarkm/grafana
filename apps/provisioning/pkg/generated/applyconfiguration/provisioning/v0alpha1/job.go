@@ -12,6 +12,11 @@ import (
 
 // JobApplyConfiguration represents a declarative configuration of the Job type for use
 // with apply.
+//
+// When this code is changed, make sure to update the code generation.
+// As of writing, this can be done via the hack dir in the root of the repo: ./hack/update-codegen.sh provisioning
+// If you've opened the generated files in this dir at some point in VSCode, you may also have to re-open them to clear errors.
+// The repository name and type are stored as labels
 type JobApplyConfiguration struct {
 	v1.TypeMetaApplyConfiguration    `json:",inline"`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
@@ -29,6 +34,8 @@ func Job(name, namespace string) *JobApplyConfiguration {
 	b.WithAPIVersion("provisioning.grafana.app/v0alpha1")
 	return b
 }
+
+func (b JobApplyConfiguration) IsApplyConfiguration() {}
 
 // WithKind sets the Kind field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
@@ -204,8 +211,24 @@ func (b *JobApplyConfiguration) WithStatus(value *JobStatusApplyConfiguration) *
 	return b
 }
 
+// GetKind retrieves the value of the Kind field in the declarative configuration.
+func (b *JobApplyConfiguration) GetKind() *string {
+	return b.TypeMetaApplyConfiguration.Kind
+}
+
+// GetAPIVersion retrieves the value of the APIVersion field in the declarative configuration.
+func (b *JobApplyConfiguration) GetAPIVersion() *string {
+	return b.TypeMetaApplyConfiguration.APIVersion
+}
+
 // GetName retrieves the value of the Name field in the declarative configuration.
 func (b *JobApplyConfiguration) GetName() *string {
 	b.ensureObjectMetaApplyConfigurationExists()
 	return b.ObjectMetaApplyConfiguration.Name
+}
+
+// GetNamespace retrieves the value of the Namespace field in the declarative configuration.
+func (b *JobApplyConfiguration) GetNamespace() *string {
+	b.ensureObjectMetaApplyConfigurationExists()
+	return b.ObjectMetaApplyConfiguration.Namespace
 }

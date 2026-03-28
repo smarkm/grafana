@@ -12,7 +12,7 @@ jest.mock('../../core/app_events', () => ({
   emit: jest.fn(),
 }));
 
-jest.mock('app/core/core', () => ({
+jest.mock('app/core/services/context_srv', () => ({
   contextSrv: {
     user: { orgId: 1 },
     hasPermission: () => false,
@@ -29,7 +29,6 @@ const setup = (propOverrides?: object) => {
     page: 1,
     totalPages: 1,
     perPage: 30,
-    externalUserMngInfo: '',
     fetchInvitees: jest.fn(),
     loadUsers: jest.fn(),
     updateUser: jest.fn(),

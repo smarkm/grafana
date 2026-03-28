@@ -14,6 +14,7 @@ import { SecretFormField } from './components/SecretFormField/SecretFormField';
 import * as commonOptionsBuilder from './options/builder';
 import * as styleMixins from './themes/mixins';
 import * as DOMUtil from './utils/dom';
+import * as floatingUtils from './utils/floating';
 import * as ReactUtils from './utils/reactUtils';
 
 export { Icon } from './components/Icon/Icon';
@@ -44,7 +45,7 @@ export {
 export { EmptySearchResult } from './components/EmptySearchResult/EmptySearchResult';
 export { EmptyState } from './components/EmptyState/EmptyState';
 export { UnitPicker } from './components/UnitPicker/UnitPicker';
-export { StatsPicker } from './components/StatsPicker/StatsPicker';
+export { StatsPicker, type StatsPickerProps } from './components/StatsPicker/StatsPicker';
 export { RefreshPicker, defaultIntervals } from './components/RefreshPicker/RefreshPicker';
 export { TimeRangePicker, type TimeRangePickerProps } from './components/DateTimePickers/TimeRangePicker';
 export { TimeRangeProvider } from './components/DateTimePickers/TimeRangeContext';
@@ -137,7 +138,6 @@ export {
 } from './components/BigValue/BigValue';
 export { Sparkline } from './components/Sparkline/Sparkline';
 
-export { Gauge } from './components/Gauge/Gauge';
 export { BarGauge } from './components/BarGauge/BarGauge';
 export {
   VizTooltip,
@@ -249,6 +249,11 @@ export { ToolbarButton } from './components/ToolbarButton/ToolbarButton';
 export { ToolbarButtonRow } from './components/ToolbarButton/ToolbarButtonRow';
 export { ValuePicker } from './components/ValuePicker/ValuePicker';
 export { fieldMatchersUI } from './components/MatchersUI/fieldMatchersUI';
+export {
+  MatcherScopeSelector,
+  getUniqueMatcherScopes,
+  buildScopeOptions,
+} from './components/MatchersUI/MatcherScopeSelector';
 export { Link } from './components/Link/Link';
 export { TextLink } from './components/Link/TextLink';
 export { Text } from './components/Text/Text';
@@ -352,6 +357,7 @@ export { EventsCanvas } from './components/uPlot/geometries/EventsCanvas';
 export { TooltipPlugin2 } from './components/uPlot/plugins/TooltipPlugin2';
 export { EventBusPlugin } from './components/uPlot/plugins/EventBusPlugin';
 export { KeyboardPlugin } from './components/uPlot/plugins/KeyboardPlugin';
+export { XAxisInteractionAreaPlugin } from './components/uPlot/plugins/XAxisInteractionAreaPlugin';
 
 export { type PlotTooltipInterpolator, type PlotSelection, FIXED_UNIT } from './components/uPlot/types';
 export { type UPlotConfigPrepFn } from './components/uPlot/config/UPlotConfigBuilder';
@@ -364,12 +370,6 @@ export { VariablesInputModal } from './components/Actions/VariablesInputModal';
 // Graveyard: exported, but no longer used internally
 // These will be removed in the future
 // -----------------------------------------------------
-
-export { Graph } from './graveyard/Graph/Graph';
-export { GraphWithLegend } from './graveyard/Graph/GraphWithLegend';
-export { GraphContextMenu, GraphContextMenuHeader } from './graveyard/Graph/GraphContextMenu';
-export { graphTimeFormat, graphTickFormatter } from './graveyard/Graph/utils';
-export { GraphSeriesToggler, type GraphSeriesTogglerAPI } from './graveyard/Graph/GraphSeriesToggler';
 
 export { GraphNG, type GraphNGProps } from './graveyard/GraphNG/GraphNG';
 export { TimeSeries } from './graveyard/TimeSeries/TimeSeries';
@@ -437,7 +437,7 @@ export { NodeGraphDataFrameFieldNames } from './utils/nodeGraph';
 export { fuzzyMatch } from './utils/fuzzy';
 export { logOptions } from './utils/logOptions';
 
-export { DOMUtil, ReactUtils };
+export { DOMUtil, ReactUtils, floatingUtils };
 
 export { ThemeContext } from '@grafana/data';
 export {
@@ -464,6 +464,7 @@ export { RunnerPlugin } from './slate-plugins/runner';
 export { SelectionShortcutsPlugin } from './slate-plugins/selection_shortcuts';
 export { SlatePrism, type Token } from './slate-plugins/slate-prism';
 export { SuggestionsPlugin } from './slate-plugins/suggestions';
+export { Sidebar, useSidebar, type SidebarPosition, type SidebarContextValue } from './components/Sidebar/Sidebar';
 
 // @deprecated import from @grafana/schema
 export {

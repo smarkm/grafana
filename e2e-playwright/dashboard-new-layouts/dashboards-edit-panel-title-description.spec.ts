@@ -4,15 +4,16 @@ import { flows } from './utils';
 
 test.use({
   featureToggles: {
-    kubernetesDashboards: true,
     dashboardNewLayouts: true,
+    dashboardUndoRedo: true,
     groupByVariable: true,
   },
 });
 
 const PAGE_UNDER_TEST = '5SdHCadmz/panel-tests-graph';
 
-test.describe(
+// TODO: https://github.com/grafana/grafana/issues/120984
+test.skip(
   'Dashboard',
   {
     tag: ['@dashboards'],

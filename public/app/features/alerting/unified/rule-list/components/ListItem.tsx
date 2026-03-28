@@ -31,7 +31,7 @@ export const ListItem = (props: ListItemProps) => {
         {/* icon */}
         <span className={styles.statusIcon}>{icon}</span>
 
-        <Stack direction="column" gap={0} flex="1" minWidth={0}>
+        <Stack direction="column" gap={0.5} flex="1" minWidth={0}>
           {/* title */}
           <Stack direction="column" gap={0}>
             <div className={styles.textOverflow}>{title}</div>
@@ -78,13 +78,14 @@ const Separator = () => (
 
 const getStyles = (theme: GrafanaTheme2) => ({
   alertListItemContainer: css({
-    position: 'relative',
     listStyle: 'none',
+    position: 'relative',
 
     padding: theme.spacing(1),
 
     '&:hover': {
       background: theme.colors.action.hover,
+      borderRadius: theme.shape.radius.default,
     },
   }),
   textOverflow: css({

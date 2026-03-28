@@ -13,11 +13,7 @@ import (
 )
 
 func TestIntegrationProvisioning_InlineSecrets(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
-
-	helper := runGrafana(t)
+	helper := sharedHelper(t)
 	createOptions := metav1.CreateOptions{FieldValidation: "Strict"}
 	ctx := context.Background()
 
@@ -40,6 +36,8 @@ func TestIntegrationProvisioning_InlineSecrets(t *testing.T) {
 			values: map[string]any{
 				"SecureTokenCreate":         "some-token",
 				"SecureWebhookSecretCreate": "some-secret",
+				"SyncEnabled":               true,
+				"Target":                    "folder",
 			},
 			inputFile: "testdata/github-with-inline-secrets.json.tmpl",
 			expectedFields: []expectedField{

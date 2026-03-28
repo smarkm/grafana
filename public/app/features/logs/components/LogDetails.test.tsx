@@ -12,11 +12,14 @@ import {
   DataFrameType,
   CoreApp,
   PluginExtensionPoints,
+  dateTime,
 } from '@grafana/data';
 import { setPluginLinksHook } from '@grafana/runtime';
 
+import { DATAPLANE_LABEL_TYPES_NAME, DATAPLANE_LABELS_NAME } from '../logsFrame';
+
 import { LogDetails, Props } from './LogDetails';
-import { LOG_LINE_BODY_FIELD_NAME } from './LogDetailsBody';
+import { LOG_LINE_BODY_FIELD_NAME } from './fieldSelector/logFields';
 import { getLogRowStyles } from './getLogRowStyles';
 import { createLogRow } from './mocks/logRow';
 
@@ -40,9 +43,16 @@ const setup = (propOverrides?: Partial<Props>, rowOverrides?: Partial<LogRowMode
     onClickFilterOutLabel: () => {},
     onClickShowField: () => {},
     onClickHideField: () => {},
-    theme,
     styles,
     app: CoreApp.Explore,
+    timeRange: {
+      from: dateTime(1757937009041),
+      to: dateTime(1757940609041),
+      raw: {
+        from: 'now-1h',
+        to: 'now',
+      },
+    },
     ...(propOverrides || {}),
   };
 
@@ -325,6 +335,10 @@ describe('LogDetails', () => {
           type: 'loki',
           uid: 'grafanacloud-logs',
         },
+        timeRange: {
+          from: 1757937009041,
+          to: 1757940609041,
+        },
         attributes: { key1: ['label1'], key2: ['label2'] },
       },
     });
@@ -343,12 +357,12 @@ describe('LogDetails', () => {
         { name: 'body', type: FieldType.string, values: [entry] },
         { name: 'id', type: FieldType.string, values: ['1'] },
         {
-          name: 'labels',
+          name: DATAPLANE_LABELS_NAME,
           type: FieldType.other,
           values: [labels],
         },
         {
-          name: 'labelTypes',
+          name: DATAPLANE_LABEL_TYPES_NAME,
           type: FieldType.other,
           values: [
             {

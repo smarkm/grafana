@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { type JSX, useCallback, useMemo, useState } from 'react';
 
 import { t } from '@grafana/i18n';
 import { locationService } from '@grafana/runtime';
@@ -83,7 +83,6 @@ export const useDeleteModal = (redirectToListView = false): DeleteModalHook => {
               )
         }
         confirmText={t('alerting.use-delete-modal.modal.confirmText-yes-delete', 'Yes, delete')}
-        icon="exclamation-triangle"
         onConfirm={deleteRule}
         onDismiss={dismissModal}
       />

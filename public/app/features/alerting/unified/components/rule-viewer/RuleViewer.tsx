@@ -3,8 +3,10 @@ import { chain, truncate } from 'lodash';
 import { useEffect, useState } from 'react';
 import { useMeasure } from 'react-use';
 
-import { NavModelItem, UrlQueryValue } from '@grafana/data';
+import { AlertLabels, StateText } from '@grafana/alerting/unstable';
+import { GrafanaTheme2, NavModelItem, UrlQueryValue } from '@grafana/data';
 import { Trans, t } from '@grafana/i18n';
+import { config } from '@grafana/runtime';
 import {
   Alert,
   LinkButton,
@@ -32,15 +34,23 @@ import { PromAlertingRuleState, PromRuleType } from 'app/types/unified-alerting-
 
 import { logError } from '../../Analytics';
 import { defaultPageNav } from '../../RuleViewer';
+import { useRuleViewExtensionsNav } from '../../enterprise-components/rule-view-page/navigation';
 import { shouldUseAlertingListViewV2, shouldUsePrometheusRulesPrimary } from '../../featureToggles';
 import { isError, useAsync } from '../../hooks/useAsync';
 import { useRuleLocation } from '../../hooks/useCombinedRule';
 import { useHasRulerV2 } from '../../hooks/useHasRuler';
 import { useRuleGroupConsistencyCheck } from '../../hooks/usePrometheusConsistencyCheck';
 import { useReturnTo } from '../../hooks/useReturnTo';
+import { getAlertRulesNavId } from '../../navigation/useAlertRulesNav';
 import { PluginOriginBadge } from '../../plugins/PluginOriginBadge';
+import { normalizeHealth, normalizeState } from '../../rule-list/components/util';
 import { Annotation } from '../../utils/constants';
-import { getRulesSourceUid, ruleIdentifierToRuleSourceIdentifier } from '../../utils/datasource';
+import {
+  GRAFANA_RULES_SOURCE_NAME,
+  getRulesSourceUid,
+  isGrafanaRulesSource,
+  ruleIdentifierToRuleSourceIdentifier,
+} from '../../utils/datasource';
 import { labelsSize } from '../../utils/labels';
 import { makeDashboardLink, makePanelLink, stringifyErrorLike } from '../../utils/misc';
 import { createListFilterLink, groups } from '../../utils/navigation';
@@ -53,32 +63,33 @@ import {
   prometheusRuleType,
   rulerRuleType,
 } from '../../utils/rules';
-import { AlertLabels } from '../AlertLabels';
 import { AlertingPageWrapper } from '../AlertingPageWrapper';
+import { InhibitionRulesAlert } from '../InhibitionRulesAlert';
 import { ProvisionedResource, ProvisioningAlert } from '../Provisioning';
 import { WithReturnButton } from '../WithReturnButton';
 import { decodeGrafanaNamespace } from '../expressions/util';
 import { RedirectToCloneRule } from '../rules/CloneRule';
 
 import { ContactPointLink } from './ContactPointLink';
+import { Details } from './Details';
 import { FederatedRuleWarning } from './FederatedRuleWarning';
-import PausedBadge from './PausedBadge';
 import { useAlertRule } from './RuleContext';
-import { RecordingBadge, StateBadge } from './StateBadges';
 import { AlertVersionHistory } from './tabs/AlertVersionHistory';
-import { Details } from './tabs/Details';
 import { History } from './tabs/History';
 import { InstancesList } from './tabs/Instances';
+import { Notifications } from './tabs/Notifications';
 import { QueryResults } from './tabs/Query';
 import { Routing } from './tabs/Routing';
+import { RulePageEnrichmentSectionExtension } from './tabs/extensions/RuleViewerExtension';
 
 export enum ActiveTab {
   Query = 'query',
   Instances = 'instances',
   History = 'history',
+  Notifications = 'notifications',
   Routing = 'routing',
-  Details = 'details',
   VersionHistory = 'version-history',
+  Enrichment = 'enrichment',
 }
 
 const prometheusRulesPrimary = shouldUsePrometheusRulesPrimary();
@@ -87,6 +98,7 @@ const alertingListViewV2 = shouldUseAlertingListViewV2();
 const RuleViewer = () => {
   const { rule, identifier } = useAlertRule();
   const { pageNav, activeTab } = usePageNav(rule);
+  const styles = useStyles2(getStyles);
 
   // GMA /api/v1/rules endpoint is strongly consistent, so we don't need to check for consistency
   const shouldUseConsistencyCheck = isGrafanaRuleIdentifier(identifier)
@@ -98,7 +110,7 @@ const RuleViewer = () => {
   // of duplicating provisioned alert rules
   const [duplicateRuleIdentifier, setDuplicateRuleIdentifier] = useState<RuleIdentifier>();
   const { returnTo } = useReturnTo('/alerting/list');
-  const { annotations, promRule, rulerRule } = rule;
+  const { annotations, promRule, rulerRule, namespace } = rule;
 
   const hasError = isErrorHealth(promRule?.health);
 
@@ -114,7 +126,7 @@ const RuleViewer = () => {
   return (
     <AlertingPageWrapper
       pageNav={pageNav}
-      navId="alert-list"
+      navId={getAlertRulesNavId()}
       isLoading={false}
       renderTitle={(title) => (
         <Title
@@ -128,7 +140,7 @@ const RuleViewer = () => {
         />
       )}
       actions={<RuleActionsButtons rule={rule} rulesSource={rule.namespace.rulesSource} />}
-      info={createMetadata(rule)}
+      info={createMetadata(rule, styles)}
       subTitle={
         <Stack direction="column">
           {summary}
@@ -158,21 +170,35 @@ const RuleViewer = () => {
       }
     >
       {shouldUseConsistencyCheck && <PrometheusConsistencyCheck ruleIdentifier={identifier} />}
-      <Stack direction="column" gap={2}>
-        {/* tabs and tab content */}
-        <TabContent>
-          {activeTab === ActiveTab.Query && <QueryResults rule={rule} />}
-          {activeTab === ActiveTab.Instances && <InstancesList rule={rule} />}
-          {activeTab === ActiveTab.History && rulerRuleType.grafana.rule(rule.rulerRule) && (
-            <History rule={rule.rulerRule} />
-          )}
-          {activeTab === ActiveTab.Routing && <Routing />}
-          {activeTab === ActiveTab.Details && <Details rule={rule} />}
-          {activeTab === ActiveTab.VersionHistory && rulerRuleType.grafana.rule(rule.rulerRule) && (
-            <AlertVersionHistory rule={rule.rulerRule} />
-          )}
-        </TabContent>
-      </Stack>
+      {/* Show inhibition rules alert only for Grafana-managed rules */}
+      {isGrafanaRulesSource(namespace.rulesSource) && (
+        <InhibitionRulesAlert alertmanagerSourceName={GRAFANA_RULES_SOURCE_NAME} />
+      )}
+      <div className={styles.layout}>
+        <Stack direction="column" gap={2}>
+          {/* tabs and tab content */}
+          <TabContent>
+            {activeTab === ActiveTab.Query && <QueryResults rule={rule} />}
+            {activeTab === ActiveTab.Instances && <InstancesList rule={rule} />}
+            {activeTab === ActiveTab.History && rulerRuleType.grafana.rule(rule.rulerRule) && (
+              <History rule={rule.rulerRule} />
+            )}
+            {activeTab === ActiveTab.Notifications && rulerRuleType.grafana.rule(rule.rulerRule) && (
+              <Notifications rule={rule.rulerRule} />
+            )}
+            {activeTab === ActiveTab.Routing && <Routing />}
+            {activeTab === ActiveTab.VersionHistory && rulerRuleType.grafana.rule(rule.rulerRule) && (
+              <AlertVersionHistory rule={rule.rulerRule} />
+            )}
+            {activeTab === ActiveTab.Enrichment && rule.uid && (
+              <RulePageEnrichmentSectionExtension ruleUid={rule.uid} />
+            )}
+          </TabContent>
+        </Stack>
+        <aside className={styles.sidebar}>
+          <Details rule={rule} />
+        </aside>
+      </div>
       {duplicateRuleIdentifier && (
         <RedirectToCloneRule
           redirectTo={true}
@@ -185,7 +211,7 @@ const RuleViewer = () => {
   );
 };
 
-const createMetadata = (rule: CombinedRule): PageInfoItem[] => {
+const createMetadata = (rule: CombinedRule, styles: ReturnType<typeof getStyles>): PageInfoItem[] => {
   const { labels, annotations, group, rulerRule } = rule;
   const metadata: PageInfoItem[] = [];
 
@@ -198,7 +224,6 @@ const createMetadata = (rule: CombinedRule): PageInfoItem[] => {
   const hasLabels = labelsSize(labels) > 0;
 
   const interval = group.interval;
-  const styles = useStyles2(getStyles);
 
   // if the alert rule uses simplified routing, we'll show a link to the contact point
   if (rulerRuleType.grafana.alertingRule(rulerRule)) {
@@ -303,6 +328,9 @@ export const Title = ({ name, paused = false, state, health, ruleType, ruleOrigi
 
   const { returnTo } = useReturnTo(returnToHref);
 
+  const textHealth = normalizeHealth(health);
+  const textState = normalizeState(state);
+
   return (
     <Stack direction="row" gap={1} minWidth={0} alignItems="center">
       {returnToHref && (
@@ -317,15 +345,9 @@ export const Title = ({ name, paused = false, state, health, ruleType, ruleOrigi
       <Text variant="h1" truncate>
         {name}
       </Text>
-      {paused ? (
-        <PausedBadge />
-      ) : (
-        <>
-          {/* recording rules won't have a state */}
-          {state && <StateBadge state={state} health={health} />}
-          {isRecordingRule && <RecordingBadge health={health} />}
-        </>
-      )}
+      {/* recording rules won't have a state */}
+      {state && <StateText type="alerting" state={textState} health={textHealth} isPaused={paused} />}
+      {isRecordingRule && <StateText type="recording" health={textHealth} isPaused={paused} />}
     </Stack>
   );
 };
@@ -342,7 +364,7 @@ const PrometheusConsistencyCheck = withErrorBoundary(
   ({ ruleIdentifier }: PrometheusConsistencyCheckProps) => {
     const [ref, { width }] = useMeasure<HTMLDivElement>();
 
-    const { hasRuler } = useHasRulerV2(ruleIdentifierToRuleSourceIdentifier(ruleIdentifier));
+    const { hasRuler } = useHasRulerV2(ruleIdentifierToRuleSourceIdentifier(ruleIdentifier).uid);
     const { result: ruleLocation } = useRuleLocation(ruleIdentifier);
 
     const { waitForGroupConsistency, groupConsistent } = useRuleGroupConsistencyCheck();
@@ -438,6 +460,12 @@ function usePageNav(rule: CombinedRule) {
 
   const groupDetailsUrl = groups.detailsPageLink(dataSourceUID, namespaceString, groupName);
 
+  const setActiveTabFromString = (tab: string) => {
+    if (isValidTab(tab)) {
+      setActiveTab(tab);
+    }
+  };
+
   const pageNav: NavModelItem = {
     ...defaultPageNav,
     text: rule.name,
@@ -469,12 +497,16 @@ function usePageNav(rule: CombinedRule) {
         hideFromTabs: !isGrafanaAlertRule,
       },
       {
-        text: t('alerting.use-page-nav.page-nav.text.details', 'Details'),
-        active: activeTab === ActiveTab.Details,
+        text: t('alerting.use-page-nav.page-nav.text.notifications', 'Notifications'),
+        active: activeTab === ActiveTab.Notifications,
         onClick: () => {
-          setActiveTab(ActiveTab.Details);
+          setActiveTab(ActiveTab.Notifications);
         },
+        // notification history is only available for Grafana managed alert rules and requires feature toggles
+        hideFromTabs: !isGrafanaAlertRule || !config.featureToggles.alertingNotificationHistoryRuleViewer,
       },
+      // Enterprise extensions (e.g. Alert enrichment) should appear after routing
+      ...useRuleViewExtensionsNav(activeTab, setActiveTabFromString),
       {
         text: t('alerting.use-page-nav.page-nav.text.versions', 'Versions'),
         active: activeTab === ActiveTab.VersionHistory,
@@ -516,9 +548,30 @@ export const calculateTotalInstances = (stats: AlertInstanceTotals) => {
     .value();
 };
 
-const getStyles = () => ({
+const getStyles = (theme: GrafanaTheme2) => ({
   url: css({
     wordBreak: 'break-all',
+  }),
+  layout: css({
+    display: 'grid',
+    gridTemplateColumns: '1fr 320px',
+    gap: theme.spacing(3),
+    alignItems: 'start',
+
+    [theme.breakpoints.down('lg')]: {
+      gridTemplateColumns: '1fr',
+    },
+  }),
+  sidebar: css({
+    borderLeft: `1px solid ${theme.colors.border.weak}`,
+    paddingLeft: theme.spacing(3),
+
+    [theme.breakpoints.down('lg')]: {
+      borderLeft: 'none',
+      paddingLeft: 0,
+      borderTop: `1px solid ${theme.colors.border.weak}`,
+      paddingTop: theme.spacing(3),
+    },
   }),
 });
 

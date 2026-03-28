@@ -6,15 +6,18 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { CoreApp, Field, fuzzySearch, GrafanaTheme2, IconName, LinkModel, LogLabelStatsModel } from '@grafana/data';
 import { t } from '@grafana/i18n';
 import { reportInteraction } from '@grafana/runtime';
-import { ClipboardButton, DataLinkButton, IconButton, useStyles2 } from '@grafana/ui';
+import { ClipboardButton, DataLinkButton, IconButton, IconSize, useStyles2 } from '@grafana/ui';
 
 import { logRowToSingleRowDataFrame } from '../../logsModel';
 import { calculateLogsLabelStats, calculateStats } from '../../utils';
 import { LogLabelStats } from '../LogLabelStats';
+import { OTEL_LOG_LINE_ATTRIBUTES_FIELD_NAME } from '../fieldSelector/logFields';
 import { FieldDef } from '../logParser';
 
+import { useLogDetailsContext } from './LogDetailsContext';
+import { LogListFontSize } from './LogList';
 import { useLogListContext } from './LogListContext';
-import { LogListModel } from './processing';
+import { LogListModel, getNormalizedFieldName } from './processing';
 
 interface LogLineDetailsFieldsProps {
   disableActions?: boolean;
@@ -25,7 +28,8 @@ interface LogLineDetailsFieldsProps {
 }
 
 export const LogLineDetailsFields = memo(({ disableActions, fields, log, logs, search }: LogLineDetailsFieldsProps) => {
-  const styles = useStyles2(getFieldsStyles);
+  const { fontSize } = useLogListContext();
+  const styles = useStyles2(getFieldsStyles, fontSize);
   const getLogs = useCallback(() => logs, [logs]);
   const filteredFields = useMemo(() => (search ? filterFields(fields, search) : fields), [fields, search]);
 
@@ -72,7 +76,8 @@ interface LogLineDetailsLabelFieldsProps {
 }
 
 export const LogLineDetailsLabelFields = ({ fields, log, logs, search }: LogLineDetailsLabelFieldsProps) => {
-  const styles = useStyles2(getFieldsStyles);
+  const { fontSize } = useLogListContext();
+  const styles = useStyles2(getFieldsStyles, fontSize);
   const getLogs = useCallback(() => logs, [logs]);
   const filteredFields = useMemo(() => (search ? filterLabels(fields, search) : fields), [fields, search]);
 
@@ -99,15 +104,15 @@ export const LogLineDetailsLabelFields = ({ fields, log, logs, search }: LogLine
   );
 };
 
-const getFieldsStyles = (theme: GrafanaTheme2) => ({
+const getFieldsStyles = (theme: GrafanaTheme2, fontSize: LogListFontSize) => ({
   fieldsTable: css({
     display: 'grid',
-    gap: theme.spacing(1),
-    gridTemplateColumns: `${theme.spacing(11.5)} minmax(auto, 40%) 1fr`,
+    gap: fontSize === 'small' ? theme.spacing(0.25, 0.5) : theme.spacing(0.5, 1),
+    gridTemplateColumns: `${fontSize === 'small' ? theme.spacing(10) : theme.spacing(11.5)} fit-content(30%) 1fr`,
   }),
   fieldsTableNoActions: css({
     display: 'grid',
-    gap: theme.spacing(1),
+    gap: fontSize === 'small' ? theme.spacing(0.25, 0.5) : theme.spacing(0.5, 1),
     gridTemplateColumns: `auto 1fr`,
   }),
 });
@@ -136,9 +141,9 @@ export const LogLineDetailsField = ({
   const [showFieldsStats, setShowFieldStats] = useState(false);
   const [fieldCount, setFieldCount] = useState(0);
   const [fieldStats, setFieldStats] = useState<LogLabelStatsModel[] | null>(null);
+  const { fontSize } = useLogListContext();
   const {
     app,
-    closeDetails,
     displayedFields,
     isLabelFilterActive,
     noInteractions,
@@ -148,8 +153,9 @@ export const LogLineDetailsField = ({
     onClickHideField,
     onPinLine,
     pinLineButtonTooltipTitle,
-    syntaxHighlighting,
+    prettifyJSON,
   } = useLogListContext();
+  const { closeDetails } = useLogDetailsContext();
 
   const styles = useStyles2(getFieldStyles);
 
@@ -258,66 +264,77 @@ export const LogLineDetailsField = ({
   const singleKey = keys.length === 1;
   const singleValue = values.length === 1;
 
+  const fieldSupportsFilters = keys[0] !== OTEL_LOG_LINE_ATTRIBUTES_FIELD_NAME;
+
   return (
     <>
       <div className={styles.row}>
         {!disableActions && (
           <div className={styles.actions}>
-            {onClickFilterLabel && (
-              <AsyncIconButton
-                name="search-plus"
-                onClick={filterLabel}
-                // We purposely want to pass a new function on every render to allow the active state to be updated when log details remains open between updates.
-                isActive={labelFilterActive}
-                tooltipSuffix={refIdTooltip}
-              />
-            )}
-            {onClickFilterOutLabel && (
+            <div className={styles.actionIcons}>
+              {onClickFilterLabel && fieldSupportsFilters && (
+                <AsyncIconButton
+                  name="search-plus"
+                  size={fontSize === 'small' ? 'sm' : undefined}
+                  onClick={filterLabel}
+                  // We purposely want to pass a new function on every render to allow the active state to be updated when log details remains open between updates.
+                  isActive={labelFilterActive}
+                  tooltipSuffix={refIdTooltip}
+                />
+              )}
+              {onClickFilterOutLabel && fieldSupportsFilters && (
+                <IconButton
+                  name="search-minus"
+                  size={fontSize === 'small' ? 'sm' : undefined}
+                  tooltip={
+                    app === CoreApp.Explore && log.dataFrame?.refId
+                      ? t('logs.log-line-details.fields.filter-out-query', 'Filter out value in query {{query}}', {
+                          query: log.dataFrame?.refId,
+                        })
+                      : t('logs.log-line-details.fields.filter-out', 'Filter out value')
+                  }
+                  onClick={filterOutLabel}
+                />
+              )}
+              {singleKey && displayedFields.includes(keys[0]) && (
+                <IconButton
+                  variant="primary"
+                  size={fontSize === 'small' ? 'sm' : undefined}
+                  tooltip={t('logs.log-line-details.fields.toggle-field-button.hide-this-field', 'Hide this field')}
+                  name="eye"
+                  onClick={hideField}
+                />
+              )}
+              {singleKey && !displayedFields.includes(keys[0]) && (
+                <IconButton
+                  tooltip={t(
+                    'logs.log-line-details.fields.toggle-field-button.field-instead-message',
+                    'Show this field instead of the message'
+                  )}
+                  name="eye"
+                  size={fontSize === 'small' ? 'sm' : undefined}
+                  onClick={showField}
+                />
+              )}
               <IconButton
-                name="search-minus"
-                tooltip={
-                  app === CoreApp.Explore && log.dataFrame?.refId
-                    ? t('logs.log-line-details.fields.filter-out-query', 'Filter out value in query {{query}}', {
-                        query: log.dataFrame?.refId,
-                      })
-                    : t('logs.log-line-details.fields.filter-out', 'Filter out value')
-                }
-                onClick={filterOutLabel}
+                variant={showFieldsStats ? 'primary' : 'secondary'}
+                name="signal"
+                size={fontSize === 'small' ? 'sm' : undefined}
+                tooltip={t('logs.log-line-details.fields.adhoc-statistics', 'Ad-hoc statistics')}
+                className={styles.statsIcon}
+                disabled={!singleKey}
+                onClick={showStats}
               />
-            )}
-            {singleKey && displayedFields.includes(keys[0]) && (
-              <IconButton
-                variant="primary"
-                tooltip={t('logs.log-line-details.fields.toggle-field-button.hide-this-field', 'Hide this field')}
-                name="eye"
-                onClick={hideField}
-              />
-            )}
-            {singleKey && !displayedFields.includes(keys[0]) && (
-              <IconButton
-                tooltip={t(
-                  'logs.log-line-details.fields.toggle-field-button.field-instead-message',
-                  'Show this field instead of the message'
-                )}
-                name="eye"
-                onClick={showField}
-              />
-            )}
-            <IconButton
-              variant={showFieldsStats ? 'primary' : 'secondary'}
-              name="signal"
-              tooltip={t('logs.log-line-details.fields.adhoc-statistics', 'Ad-hoc statistics')}
-              className="stats-button"
-              disabled={!singleKey}
-              onClick={showStats}
-            />
+            </div>
           </div>
         )}
-        <div className={styles.label}>{singleKey ? keys[0] : <MultipleValue values={keys} />}</div>
+        <div className={styles.label}>
+          {singleKey ? getNormalizedFieldName(keys[0]) : <MultipleValue values={keys} />}
+        </div>
         <div className={styles.value}>
           <div className={styles.valueContainer}>
             {singleValue ? (
-              <SingleValue value={values[0]} syntaxHighlighting={syntaxHighlighting} />
+              <SingleValue value={values[0]} prettifyJSON={prettifyJSON} />
             ) : (
               <MultipleValue showCopy={true} values={values} />
             )}
@@ -382,7 +399,17 @@ const getFieldStyles = (theme: GrafanaTheme2) => ({
   actions: css({
     whiteSpace: 'nowrap',
   }),
+  actionIcons: css({
+    display: 'flex',
+    justifyContent: 'space-between',
+    paddingRight: 2,
+  }),
+  statsIcon: css({
+    margin: 0,
+    paddingRight: 4,
+  }),
   label: css({
+    paddingRight: theme.spacing(1),
     overflowWrap: 'break-word',
     wordBreak: 'break-word',
   }),
@@ -418,7 +445,7 @@ const getFieldStyles = (theme: GrafanaTheme2) => ({
     display: 'flex',
     lineHeight: theme.typography.body.lineHeight,
     whiteSpace: 'pre-wrap',
-    wordBreak: 'break-all',
+    wordBreak: 'break-word',
     maxHeight: '50vh',
     overflow: 'auto',
   }),
@@ -464,7 +491,7 @@ const getClipboardButtonStyles = (theme: GrafanaTheme2) => ({
   }),
 });
 
-const MultipleValue = ({ showCopy, values = [] }: { showCopy?: boolean; values: string[] }) => {
+export const MultipleValue = ({ showCopy, values = [] }: { showCopy?: boolean; values: string[] }) => {
   if (values.every((val) => val === '')) {
     return null;
   }
@@ -484,9 +511,9 @@ const MultipleValue = ({ showCopy, values = [] }: { showCopy?: boolean; values: 
   );
 };
 
-const SingleValue = ({ value: originalValue, syntaxHighlighting }: { value: string; syntaxHighlighting?: boolean }) => {
+export const SingleValue = ({ value: originalValue, prettifyJSON }: { value: string; prettifyJSON?: boolean }) => {
   const value = useMemo(() => {
-    if (!syntaxHighlighting) {
+    if (!prettifyJSON) {
       return originalValue;
     }
     try {
@@ -496,7 +523,7 @@ const SingleValue = ({ value: originalValue, syntaxHighlighting }: { value: stri
       }
     } catch (error) {}
     return originalValue;
-  }, [originalValue, syntaxHighlighting]);
+  }, [originalValue, prettifyJSON]);
 
   return (
     <>
@@ -509,6 +536,7 @@ const SingleValue = ({ value: originalValue, syntaxHighlighting }: { value: stri
 interface AsyncIconButtonProps extends Pick<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> {
   name: IconName;
   isActive(): Promise<boolean>;
+  size?: IconSize;
   tooltipSuffix: string;
 }
 
@@ -523,7 +551,7 @@ const AsyncIconButton = ({ isActive, tooltipSuffix, ...rest }: AsyncIconButtonPr
   return <IconButton {...rest} variant={active ? 'primary' : undefined} tooltip={tooltip + tooltipSuffix} />;
 };
 
-function filterFields(fields: FieldDef[], search: string) {
+export function filterFields(fields: FieldDef[], search: string) {
   const keys = fields.map((field) => field.keys.join(' '));
   const keysIdx = fuzzySearch(keys, search);
   const values = fields.map((field) => field.values.join(' '));

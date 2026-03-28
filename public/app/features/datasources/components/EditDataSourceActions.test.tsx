@@ -28,6 +28,21 @@ jest.mock('@grafana/runtime', () => ({
   useFavoriteDatasources: jest.fn(),
 }));
 
+// Mock picker components
+jest.mock('./picker/DataSourcePicker', () => ({
+  INTERACTION_EVENT_NAME: 'dashboards_dspicker_clicked',
+  INTERACTION_ITEM: {
+    TOGGLE_FAVORITE: 'toggle_favorite',
+  },
+}));
+
+// Mock BuildDashboardButton to avoid needing a Redux Provider
+jest.mock('./BuildDashboardButton', () => ({
+  BuildDashboardButton: ({ dataSource }: { dataSource: { uid: string } }) => (
+    <a href={`dashboard/new-with-ds/${dataSource.uid}`}>Build a dashboard</a>
+  ),
+}));
+
 // Set default plugin links hook
 setPluginLinksHook(() => ({ links: [], isLoading: false }));
 
@@ -90,7 +105,7 @@ const mockDataSource = getMockDataSource({
 
 // Mock useDataSource hook
 jest.mock('../state/hooks', () => ({
-  useDataSource: () => mockDataSource,
+  useDataSource: (uid: string) => (uid === 'not-found' ? {} : mockDataSource),
 }));
 
 describe('EditDataSourceActions', () => {
@@ -371,6 +386,14 @@ describe('EditDataSourceActions', () => {
       // Core actions should still be there
       expect(screen.getByText('Build a dashboard')).toBeInTheDocument();
       expect(screen.getByText('Explore data')).toBeInTheDocument();
+    });
+  });
+
+  describe('DataSource Not Found', () => {
+    it('should not render actions when data source is not found', () => {
+      render(<EditDataSourceActions uid="not-found" />);
+      expect(screen.queryByText('Explore data')).not.toBeInTheDocument();
+      expect(screen.queryByText('Build a dashboard')).not.toBeInTheDocument();
     });
   });
 

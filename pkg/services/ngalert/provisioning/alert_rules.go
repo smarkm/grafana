@@ -114,7 +114,7 @@ func (service *AlertRuleService) ListAlertRules(ctx context.Context, user identi
 		}
 		folderUIDs := make([]string, 0, len(folders))
 		for _, f := range folders {
-			access, err := service.authz.HasAccessInFolder(ctx, user, models.Namespace(*f.ToFolderReference()))
+			access, err := service.authz.HasAccessInFolder(ctx, user, models.NewNamespace(f))
 			if err != nil {
 				return nil, nil, "", err
 			}
@@ -242,10 +242,13 @@ func (service *AlertRuleService) GetAlertRuleWithFolderFullpath(ctx context.Cont
 	}, nil
 }
 
-// CreateAlertRule creates a new alert rule. This function will ignore any
-// interval that is set in the rule struct and use the already existing group
-// interval or the default one.
+// CreateAlertRule creates a new alert rule. For normal rule groups, this function will ignore any
+// interval that is set in the rule struct and use the already existing group interval or the default one.
 func (service *AlertRuleService) CreateAlertRule(ctx context.Context, user identity.Requester, rule models.AlertRule, provenance models.Provenance) (models.AlertRule, error) {
+	if models.IsNoGroupRuleGroup(rule.RuleGroup) {
+		return models.AlertRule{}, fmt.Errorf("%w: rules must have a valid group", models.ErrAlertRuleFailedValidation)
+	}
+
 	if rule.UID == "" {
 		rule.UID = util.GenerateShortUID()
 	} else if err := util.ValidateUID(rule.UID); err != nil {
@@ -281,26 +284,28 @@ func (service *AlertRuleService) CreateAlertRule(ctx context.Context, user ident
 			interval = existingGroup[0].IntervalSeconds
 		}
 	}
-	rule.IntervalSeconds = interval
+	if rule.RuleGroup != "" {
+		rule.IntervalSeconds = interval
+	}
 	err = rule.SetDashboardAndPanelFromAnnotations()
 	if err != nil {
 		return models.AlertRule{}, err
 	}
 	rule.Updated = time.Now()
-	if len(rule.NotificationSettings) > 0 {
+	if rule.NotificationSettings != nil {
 		validator, err := service.nsValidatorProvider.Validator(ctx, rule.OrgID)
 		if err != nil {
 			return models.AlertRule{}, err
 		}
-		for _, setting := range rule.NotificationSettings {
-			if err := validator.Validate(setting); err != nil {
-				return models.AlertRule{}, errors.Join(models.ErrAlertRuleFailedValidation, err)
-			}
+		if err := validator.Validate(*rule.NotificationSettings); err != nil {
+			return models.AlertRule{}, errors.Join(models.ErrAlertRuleFailedValidation, err)
 		}
 	}
 	err = service.xact.InTransaction(ctx, func(ctx context.Context) error {
-		ids, err := service.ruleStore.InsertAlertRules(ctx, userUidOrFallback(user), []models.AlertRule{
-			rule,
+		ids, err := service.ruleStore.InsertAlertRules(ctx, userUidOrFallback(user), []models.InsertRule{
+			{
+				AlertRule: rule,
+			},
 		})
 		if err != nil {
 			return err
@@ -400,6 +405,9 @@ func (service *AlertRuleService) UpdateRuleGroup(ctx context.Context, user ident
 	if err := models.ValidateRuleGroupInterval(intervalSeconds, service.baseIntervalSeconds); err != nil {
 		return err
 	}
+	if err := service.ensureNamespace(ctx, user, user.GetOrgID(), namespaceUID); err != nil {
+		return err
+	}
 	return service.xact.InTransaction(ctx, func(ctx context.Context) error {
 		query := &models.ListAlertRulesQuery{
 			OrgID:         user.GetOrgID(),
@@ -459,9 +467,18 @@ func (service *AlertRuleService) UpdateRuleGroup(ctx context.Context, user ident
 	})
 }
 
-func (service *AlertRuleService) ReplaceRuleGroup(ctx context.Context, user identity.Requester, group models.AlertRuleGroup, provenance models.Provenance) error {
+func (service *AlertRuleService) ReplaceRuleGroup(ctx context.Context, user identity.Requester, group models.AlertRuleGroup, provenance models.Provenance, versionMessage string) error {
 	if err := models.ValidateRuleGroupInterval(group.Interval, service.baseIntervalSeconds); err != nil {
 		return err
+	}
+
+	if err := service.ensureNamespace(ctx, user, user.GetOrgID(), group.FolderUID); err != nil {
+		return err
+	}
+
+	// If the rule group is reserved for no-group rules, we cannot have multiple rules in it.
+	if models.IsNoGroupRuleGroup(group.Title) && len(group.Rules) > 1 {
+		return fmt.Errorf("rule group %s is reserved for no-group rules and cannot be used for rule groups with multiple rules", group.Title)
 	}
 
 	for _, rule := range group.Rules {
@@ -508,13 +525,13 @@ func (service *AlertRuleService) ReplaceRuleGroup(ctx context.Context, user iden
 		}
 	}
 
-	return service.persistDelta(ctx, user, delta, provenance)
+	return service.persistDelta(ctx, user, delta, provenance, versionMessage)
 }
 
-func (service *AlertRuleService) ReplaceRuleGroups(ctx context.Context, user identity.Requester, groups []*models.AlertRuleGroup, provenance models.Provenance) error {
+func (service *AlertRuleService) ReplaceRuleGroups(ctx context.Context, user identity.Requester, groups []*models.AlertRuleGroup, provenance models.Provenance, versionMessage string) error {
 	err := service.xact.InTransaction(ctx, func(ctx context.Context) error {
 		for _, group := range groups {
-			err := service.ReplaceRuleGroup(ctx, user, *group, provenance)
+			err := service.ReplaceRuleGroup(ctx, user, *group, provenance, versionMessage)
 			if err != nil {
 				return err
 			}
@@ -555,7 +572,7 @@ func (service *AlertRuleService) DeleteRuleGroups(ctx context.Context, user iden
 					return err
 				}
 			}
-			err = service.persistDelta(ctx, user, delta, provenance)
+			err = service.persistDelta(ctx, user, delta, provenance, "") // Message not used for deletes.
 			if err != nil {
 				return err
 			}
@@ -611,7 +628,7 @@ func (service *AlertRuleService) calcDelta(ctx context.Context, user identity.Re
 	return store.UpdateCalculatedRuleFields(delta), nil
 }
 
-func (service *AlertRuleService) persistDelta(ctx context.Context, user identity.Requester, delta *store.GroupDelta, provenance models.Provenance) error {
+func (service *AlertRuleService) persistDelta(ctx context.Context, user identity.Requester, delta *store.GroupDelta, provenance models.Provenance, versionMessage string) error {
 	return service.xact.InTransaction(ctx, func(ctx context.Context) error {
 		// Delete first as this could prevent future unique constraint violations.
 		if len(delta.Delete) > 0 {
@@ -653,9 +670,13 @@ func (service *AlertRuleService) persistDelta(ctx context.Context, user identity
 						},
 					})
 				}
+				if models.IsNoGroupRuleGroup(update.Existing.RuleGroup) && !models.IsNoGroupRuleGroup(update.New.RuleGroup) {
+					return fmt.Errorf("%w: cannot move rule out of this group", models.ErrAlertRuleFailedValidation)
+				}
 				updates = append(updates, models.UpdateRule{
 					Existing: update.Existing,
 					New:      *update.New,
+					Message:  versionMessage,
 				})
 			}
 			if err := service.ruleStore.UpdateAlertRules(ctx, userUidOrFallback(user), updates); err != nil {
@@ -669,7 +690,7 @@ func (service *AlertRuleService) persistDelta(ctx context.Context, user identity
 		}
 
 		if len(delta.New) > 0 {
-			uids, err := service.ruleStore.InsertAlertRules(ctx, userUidOrFallback(user), withoutNilAlertRules(delta.New))
+			uids, err := service.ruleStore.InsertAlertRules(ctx, userUidOrFallback(user), makeInsertRules(delta.New, versionMessage))
 			if err != nil {
 				return fmt.Errorf("failed to insert alert rules: %w", err)
 			}
@@ -742,15 +763,13 @@ func (service *AlertRuleService) UpdateAlertRule(ctx context.Context, user ident
 	if storedProvenance != provenance && storedProvenance != models.ProvenanceNone {
 		return models.AlertRule{}, fmt.Errorf("cannot change provenance from '%s' to '%s'", storedProvenance, provenance)
 	}
-	if len(rule.NotificationSettings) > 0 {
+	if rule.NotificationSettings != nil {
 		validator, err := service.nsValidatorProvider.Validator(ctx, rule.OrgID)
 		if err != nil {
 			return models.AlertRule{}, err
 		}
-		for _, setting := range rule.NotificationSettings {
-			if err := validator.Validate(setting); err != nil {
-				return models.AlertRule{}, errors.Join(models.ErrAlertRuleFailedValidation, err)
-			}
+		if err := validator.Validate(*rule.NotificationSettings); err != nil {
+			return models.AlertRule{}, errors.Join(models.ErrAlertRuleFailedValidation, err)
 		}
 	}
 	rule.Updated = time.Now()
@@ -796,7 +815,7 @@ func (service *AlertRuleService) DeleteAlertRule(ctx context.Context, user ident
 	if err != nil {
 		return err
 	}
-	if storedProvenance != provenance && storedProvenance != models.ProvenanceNone {
+	if canUpdate := validation.CanUpdateProvenanceInRuleGroup(storedProvenance, provenance); !canUpdate {
 		return errProvenanceMismatch.Build(errutil.TemplateData{
 			Public: map[string]interface{}{
 				"ProvidedProvenance": provenance,
@@ -981,11 +1000,15 @@ func syncGroupRuleFields(group *models.AlertRuleGroup, orgID int64) *models.Aler
 	return group
 }
 
-func withoutNilAlertRules(ptrs []*models.AlertRule) []models.AlertRule {
-	result := make([]models.AlertRule, 0, len(ptrs))
+// makeInsertRules converts a slice of AlertRule pointers to InsertRule, removing nils and adding version message.
+func makeInsertRules(ptrs []*models.AlertRule, versionMessage string) []models.InsertRule {
+	result := make([]models.InsertRule, 0, len(ptrs))
 	for _, ptr := range ptrs {
 		if ptr != nil {
-			result = append(result, *ptr)
+			result = append(result, models.InsertRule{
+				AlertRule: *ptr,
+				Message:   versionMessage,
+			})
 		}
 	}
 	return result
@@ -1005,6 +1028,7 @@ func (service *AlertRuleService) checkGroupLimits(group models.AlertRuleGroup) e
 
 // ensureNamespace ensures that the rule has a valid namespace UID.
 // If the rule does not have a namespace UID or the namespace (folder) does not exist it will return an error.
+// If the folder is managed by a manager, it will also return an error.
 func (service *AlertRuleService) ensureNamespace(ctx context.Context, user identity.Requester, orgID int64, namespaceUID string) error {
 	if namespaceUID == "" {
 		return fmt.Errorf("%w: folderUID must be set", models.ErrAlertRuleFailedValidation)
@@ -1017,16 +1041,21 @@ func (service *AlertRuleService) ensureNamespace(ctx context.Context, user ident
 	}
 
 	// ensure the namespace exists
-	_, err := service.folderService.Get(ctx, &folder.GetFolderQuery{
+	f, err := service.folderService.Get(ctx, &folder.GetFolderQuery{
 		OrgID:        orgID,
 		UID:          &namespaceUID,
 		SignedInUser: user,
 	})
-	if err != nil {
+	if err != nil || f == nil {
 		if errors.Is(err, dashboards.ErrFolderNotFound) {
 			return fmt.Errorf("%w: folder does not exist", models.ErrAlertRuleFailedValidation)
 		}
 		return err
+	}
+
+	// check if the folder is managed by a manager
+	if err := models.NewNamespace(f).ValidateForRuleStorage(); err != nil {
+		return fmt.Errorf("%w: %s", models.ErrAlertRuleFailedValidation, err)
 	}
 
 	return nil

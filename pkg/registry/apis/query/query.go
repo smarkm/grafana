@@ -4,19 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
 
-	"github.com/grafana/grafana-plugin-sdk-go/backend"
-	"github.com/grafana/grafana-plugin-sdk-go/experimental/apis/data/v0alpha1"
-	"github.com/grafana/grafana/pkg/api/dtos"
-	"github.com/grafana/grafana/pkg/components/simplejson"
-	"github.com/grafana/grafana/pkg/expr"
-	"github.com/grafana/grafana/pkg/services/datasources"
-	"github.com/grafana/grafana/pkg/services/dsquerierclient"
-	"github.com/grafana/grafana/pkg/setting"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	errorsK8s "k8s.io/apimachinery/pkg/api/errors"
@@ -25,11 +18,21 @@ import (
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/registry/rest"
 
+	"github.com/grafana/authlib/authn"
+	claims "github.com/grafana/authlib/types"
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/experimental/apis/datasource/v0alpha1"
+	"github.com/grafana/grafana/pkg/api/dtos"
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
-	query "github.com/grafana/grafana/pkg/apis/query/v0alpha1"
+	query "github.com/grafana/grafana/pkg/apis/datasource/v0alpha1"
+	"github.com/grafana/grafana/pkg/components/simplejson"
+	"github.com/grafana/grafana/pkg/expr"
 	"github.com/grafana/grafana/pkg/infra/log"
+	"github.com/grafana/grafana/pkg/services/datasources"
 	ds_service "github.com/grafana/grafana/pkg/services/datasources/service"
+	"github.com/grafana/grafana/pkg/services/dsquerierclient"
 	service "github.com/grafana/grafana/pkg/services/query"
+	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/web"
 )
 
@@ -121,11 +124,18 @@ func (r *queryREST) Connect(connectCtx context.Context, name string, _ runtime.O
 	b := r.builder
 
 	return http.HandlerFunc(func(w http.ResponseWriter, httpreq *http.Request) {
+		w.Header().Set("X-Ds-Querier", b.instanceProvider.GetMode())
+
 		ctx, span := b.tracer.Start(httpreq.Context(), "QueryService.Query")
 		defer span.End()
 		ctx = request.WithNamespace(ctx, request.NamespaceValue(connectCtx))
 		traceId := span.SpanContext().TraceID()
-		connectLogger := b.log.New("traceId", traceId.String(), "rule_uid", httpreq.Header.Get("X-Rule-Uid"))
+		connectLogger := b.log.New(
+			"traceId", traceId.String(),
+			"rule_uid", httpreq.Header.Get("X-Rule-Uid"),
+			"caller", getCaller(ctx),
+		)
+		connectLogger.Debug("received query-service request")
 		responder := newResponderWrapper(incomingResponder,
 			func(statusCode *int, obj runtime.Object) {
 				if *statusCode/100 == 4 {
@@ -151,10 +161,12 @@ func (r *queryREST) Connect(connectCtx context.Context, name string, _ runtime.O
 						}
 					}
 				}
+				connectLogger.Debug("responder sending status code", "statusCode", statusCode, "caller", getCaller(ctx))
+				b.reportStatus(ctx, *statusCode)
 			},
 
 			func(err error) {
-				connectLogger.Error("error caught in handler", "err", err)
+				connectLogger.Error("error caught in handler", "err", err, "caller", getCaller(ctx))
 				span.SetStatus(codes.Error, "query error")
 
 				if err == nil {
@@ -162,6 +174,18 @@ func (r *queryREST) Connect(connectCtx context.Context, name string, _ runtime.O
 				}
 
 				span.RecordError(err)
+
+				statusCode := 0
+				var k8sErr *errorsK8s.StatusError
+				if errors.As(err, &k8sErr) {
+					statusCode = int(k8sErr.Status().Code)
+				} else {
+					// we do not know what kind of error it is,
+					// we do not know what status code will get assigned to it,
+					// so we use the zero to indicate the unknown.
+					connectLogger.Debug("Connect: unknown error returned", "error", err)
+				}
+				b.reportStatus(ctx, statusCode)
 			})
 
 		raw := &query.QueryDataRequest{}
@@ -181,6 +205,19 @@ func (r *queryREST) Connect(connectCtx context.Context, name string, _ runtime.O
 		qdr, err := handleQuery(ctx, *raw, *b, httpreq, *responder, connectLogger)
 
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				connectLogger.Warn(
+					"query-service request deadline exceeded",
+					"ctx_err", ctx.Err(),
+					"cause", context.Cause(ctx),
+				)
+			} else if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+				connectLogger.Warn(
+					"query-service request cancelled",
+					"ctx_err", ctx.Err(),
+					"cause", context.Cause(ctx),
+				)
+			}
 			connectLogger.Error("execute error", "http code", query.GetResponseCode(qdr), "err", err)
 			logEmptyRefids(raw.Queries, connectLogger)
 			if qdr != nil { // if we have a response, we assume the err is set in the response
@@ -239,17 +276,40 @@ func (r *queryREST) Connect(connectCtx context.Context, name string, _ runtime.O
 	}), nil
 }
 
-func handleQuery(ctx context.Context, raw query.QueryDataRequest, b QueryAPIBuilder, httpreq *http.Request, responder responderWrapper, connectLogger log.Logger) (*backend.QueryDataResponse, error) {
-	var jsonQueries = make([]*simplejson.Json, 0, len(raw.Queries))
-	for _, query := range raw.Queries {
-		jsonBytes, err := json.Marshal(query)
-		if err != nil {
-			connectLogger.Error("error marshalling", err)
+type preparedQuery struct {
+	mReq          dtos.MetricRequest
+	cache         datasources.CacheService
+	headers       map[string]string
+	logger        log.Logger
+	builder       dsquerierclient.QSDatasourceClientBuilder
+	exprSvc       *expr.Service
+	reportMetrics func()
+}
+
+func prepareQuery(
+	ctx context.Context,
+	raw query.QueryDataRequest,
+	b QueryAPIBuilder,
+	httpreq *http.Request,
+	connectLogger log.Logger,
+) (*preparedQuery, error) {
+	// Normalize DS refs and build []*simplejson.Json
+	jsonQueries := make([]*simplejson.Json, 0, len(raw.Queries))
+	for _, q := range raw.Queries {
+		if dsRef, derr := getValidDataSourceRef(ctx, q.Datasource, q.DatasourceID, b.legacyDatasourceLookup); derr != nil {
+			connectLogger.Error("error getting valid datasource ref", "err", derr)
+		} else if dsRef != nil {
+			q.Datasource = dsRef
 		}
 
-		sjQuery, _ := simplejson.NewJson(jsonBytes)
+		jsonBytes, err := json.Marshal(q)
 		if err != nil {
-			connectLogger.Error("error unmarshalling", err)
+			connectLogger.Error("error marshalling query", "err", err)
+		}
+
+		sjQuery, err := simplejson.NewJson(jsonBytes)
+		if err != nil {
+			connectLogger.Error("error creating simplejson for query", "err", err)
 		}
 
 		jsonQueries = append(jsonQueries, sjQuery)
@@ -264,26 +324,26 @@ func handleQuery(ctx context.Context, raw query.QueryDataRequest, b QueryAPIBuil
 	cache := &MyCacheService{
 		legacy: b.legacyDatasourceLookup,
 	}
-
 	headers := ExtractKnownHeaders(httpreq.Header)
 
-	instance, err := b.instanceProvider.GetInstance(ctx, headers)
+	instance, err := b.instanceProvider.GetInstance(ctx, connectLogger, headers)
 	if err != nil {
 		connectLogger.Error("failed to get instance configuration settings", "err", err)
-		responder.Error(err)
 		return nil, err
 	}
 
 	instanceConfig := instance.GetSettings()
 
-	dsQuerierLoggerWithSlug := instance.GetLogger(connectLogger)
+	dsQuerierLoggerWithSlug := instance.GetLogger()
 
+	// Datasource client qsDsClientBuilder
 	qsDsClientBuilder := dsquerierclient.NewQsDatasourceClientBuilderWithInstance(
 		instance,
 		ctx,
 		dsQuerierLoggerWithSlug,
 	)
 
+	// Expressions service
 	exprService := expr.ProvideService(
 		&setting.Cfg{
 			ExpressionsEnabled:            instanceConfig.ExpressionsEnabled,
@@ -300,17 +360,37 @@ func handleQuery(ctx context.Context, raw query.QueryDataRequest, b QueryAPIBuil
 		qsDsClientBuilder,
 	)
 
-	qdr, err := service.QueryData(ctx, dsQuerierLoggerWithSlug, cache, exprService, mReq, qsDsClientBuilder, headers)
+	return &preparedQuery{
+		mReq:          mReq,
+		cache:         cache,
+		headers:       headers,
+		logger:        dsQuerierLoggerWithSlug,
+		builder:       qsDsClientBuilder,
+		exprSvc:       exprService,
+		reportMetrics: func() { instance.ReportMetrics() },
+	}, nil
+}
 
-	// tell the `instance` structure that it can now report
-	// metrics that are only reported once during a request
-	instance.ReportMetrics()
+func handlePreparedQuery(ctx context.Context, pq *preparedQuery, concurrentQueryLimit int) (*backend.QueryDataResponse, error) {
+	resp, err := service.QueryData(ctx, pq.logger, pq.cache, pq.exprSvc, pq.mReq, pq.builder, pq.headers, concurrentQueryLimit)
+	pq.reportMetrics()
+	return resp, err
+}
 
+func handleQuery(
+	ctx context.Context,
+	raw query.QueryDataRequest,
+	b QueryAPIBuilder,
+	httpreq *http.Request,
+	responder responderWrapper,
+	connectLogger log.Logger,
+) (*backend.QueryDataResponse, error) {
+	pq, err := prepareQuery(ctx, raw, b, httpreq, connectLogger)
 	if err != nil {
-		return qdr, err
+		responder.Error(err)
+		return nil, err
 	}
-
-	return qdr, nil
+	return handlePreparedQuery(ctx, pq, b.concurrentQueryLimit)
 }
 
 type responderWrapper struct {
@@ -367,5 +447,78 @@ func mergeHeaders(main http.Header, extra http.Header, l log.Logger) {
 				l.Warn("skipped duplicate response header", "header", headerName, "value", extraV)
 			}
 		}
+	}
+}
+
+/*
+most queries are stored like this:
+
+	{
+		datasource: {
+			uid: "123",
+			type: "cool-ds",
+		}
+	}
+
+but sometimes queries are stored like:
+
+	{
+		datasourceUid: "123",
+		datasource: {
+			type: "cool-ds",
+		}
+	}
+
+this sets the second case to match the first and looks up missing types
+*/
+func getValidDataSourceRef(ctx context.Context, ds *v0alpha1.DataSourceRef, id int64, legacyDatasourceLookup ds_service.LegacyDataSourceLookup) (*v0alpha1.DataSourceRef, error) {
+	if ds == nil {
+		if id == 0 {
+			return nil, fmt.Errorf("missing datasource reference or id")
+		}
+		if legacyDatasourceLookup == nil {
+			return nil, fmt.Errorf("legacy datasource lookup unsupported (id:%d)", id)
+		}
+		return legacyDatasourceLookup.GetDataSourceFromDeprecatedFields(ctx, "", id)
+	}
+
+	// we need to special-case the "grafana" data source
+	if ds.UID == "grafana" {
+		return &v0alpha1.DataSourceRef{
+			// it does not really matter what `type` we set here,
+			// we will always detect this case by `uid` later.
+			// here we go with what the data source's plugin.json says.
+			Type: "grafana",
+			UID:  "grafana",
+		}, nil
+	}
+
+	if ds.Type == "" {
+		if ds.UID == "" {
+			return nil, fmt.Errorf("missing name/uid in data source reference")
+		}
+		if expr.IsDataSource(ds.UID) {
+			return ds, nil
+		}
+		if legacyDatasourceLookup == nil {
+			return nil, fmt.Errorf("legacy datasource lookup unsupported (name:%s)", ds.UID)
+		}
+		return legacyDatasourceLookup.GetDataSourceFromDeprecatedFields(ctx, ds.UID, 0)
+	}
+
+	if ds.UID == "" && expr.IsDataSource(ds.Type) {
+		ds.UID = ds.Type
+		return ds, nil
+	}
+
+	return ds, nil
+}
+
+func getCaller(ctx context.Context) string {
+	authInfo, ok := claims.AuthInfoFrom(ctx)
+	if !ok {
+		return "<auth-missing>"
+	} else {
+		return strings.Join(authInfo.GetExtra()[authn.ServiceIdentityKey], ",")
 	}
 }

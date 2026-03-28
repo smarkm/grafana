@@ -28,6 +28,9 @@ import { Annotation } from './utils/constants';
 import { DataSourceType, GRAFANA_RULES_SOURCE_NAME } from './utils/datasource';
 
 jest.mock('./api/ruler');
+jest.mock('@grafana/assistant', () => ({
+  useAssistant: () => ({ isAvailable: false, openAssistant: jest.fn() }),
+}));
 jest.spyOn(alertingAbilities, 'useAlertRuleAbility');
 
 const prometheusModuleSettings = { alerting: true, module: 'core:plugin/prometheus' };
@@ -211,6 +214,7 @@ describe('PanelAlertTabContent', () => {
     mockAlertRuleApi(server).prometheusRuleNamespaces(GRAFANA_RULES_SOURCE_NAME, promResponse);
     mockAlertRuleApi(server).rulerRules(GRAFANA_RULES_SOURCE_NAME, rulerResponse);
     config.unifiedAlertingEnabled = true;
+    config.featureToggles.createAlertRuleFromPanel = false;
   });
 
   it('Will take into account panel maxDataPoints', async () => {

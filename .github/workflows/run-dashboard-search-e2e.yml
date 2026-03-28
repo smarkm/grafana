@@ -8,9 +8,6 @@ on:
       - completed
   workflow_dispatch:
 
-env:
-  ARCH: linux-amd64
-
 permissions: {}
 
 jobs:
@@ -25,19 +22,16 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - name: Pin Go version to mod file
-        uses: actions/setup-go@v5.5.0
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
         with:
-          go-version-file: 'go.mod'
-          cache: true
+          cache-build: 'false'
       - run: go version
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: '.nvmrc'
-          cache: 'yarn'
+      - name: Setup Node.js
+        uses: ./.github/actions/setup-node
       - name: Cache Node Modules
         id: cache-node-modules
         uses: actions/cache@v4
@@ -96,7 +90,7 @@ jobs:
 
       steps:
         - name: Checkout repository
-          uses: actions/checkout@v4
+          uses: actions/checkout@v5
           with:
             persist-credentials: false
         - name: Restore Cached Node Modules

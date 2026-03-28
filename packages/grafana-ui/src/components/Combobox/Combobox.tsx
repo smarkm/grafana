@@ -1,7 +1,7 @@
 import { cx } from '@emotion/css';
 import { useVirtualizer, type Range } from '@tanstack/react-virtual';
 import { useCombobox } from 'downshift';
-import React, { useCallback, useId, useMemo } from 'react';
+import React, { ComponentProps, useCallback, useId, useMemo } from 'react';
 
 import { t } from '@grafana/i18n';
 
@@ -33,6 +33,11 @@ interface ComboboxStaticProps<T extends string | number>
    */
   createCustomValue?: boolean;
   /**
+   * Custom description text for the "create custom value" option.
+   * Defaults to "Use custom value".
+   */
+  customValueDescription?: string;
+  /**
    * Custom container for rendering the dropdown menu via Portal
    */
   portalContainer?: HTMLElement;
@@ -60,6 +65,16 @@ interface ComboboxStaticProps<T extends string | number>
    * Called when the input loses focus.
    */
   onBlur?: () => void;
+
+  /**
+   * Icon to display at the start of the ComboBox input
+   */
+  prefixIcon?: ComponentProps<typeof Icon>['name'];
+
+  /**
+   * Message to display when there are no options found. Defaults to "No options found."
+   */
+  noOptionsMessage?: string;
 }
 
 interface ClearableProps<T extends string | number> {
@@ -114,8 +129,10 @@ const noop = () => {};
 export const VIRTUAL_OVERSCAN_ITEMS = 4;
 
 /**
- * A performant Select replacement.
+ * A performant and accessible combobox component that supports both synchronous and asynchronous options loading. It provides type-ahead filtering, keyboard navigation, and virtual scrolling for handling large datasets efficiently.
+ * Replaces the Select component, and has better performance.
  *
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/inputs-combobox--docs
  * @alpha
  */
 export const Combobox = <T extends string | number>(props: ComboboxProps<T>) => {
@@ -126,6 +143,7 @@ export const Combobox = <T extends string | number>(props: ComboboxProps<T>) => 
     placeholder: placeholderProp,
     isClearable, // this should be default false, but TS can't infer the conditional type if you do
     createCustomValue = false,
+    customValueDescription,
     id,
     width,
     minWidth,
@@ -137,6 +155,8 @@ export const Combobox = <T extends string | number>(props: ComboboxProps<T>) => 
     disabled,
     portalContainer,
     invalid,
+    prefixIcon,
+    noOptionsMessage,
   } = props;
 
   // Value can be an actual scalar Value (string or number), or an Option (value + label), so
@@ -150,7 +170,8 @@ export const Combobox = <T extends string | number>(props: ComboboxProps<T>) => 
     updateOptions,
     asyncLoading,
     asyncError,
-  } = useOptions(props.options, createCustomValue);
+    resetSearch,
+  } = useOptions(props.options, createCustomValue, customValueDescription);
   const isAsync = typeof allOptions === 'function';
 
   const selectedItemIndex = useMemo(() => {
@@ -227,6 +248,7 @@ export const Combobox = <T extends string | number>(props: ComboboxProps<T>) => 
       }
       return itemHeight;
     },
+    getItemKey: (index: number) => filteredOptions[index]?.value ?? index,
     overscan: VIRTUAL_OVERSCAN_ITEMS,
     rangeExtractor,
   });
@@ -247,6 +269,7 @@ export const Combobox = <T extends string | number>(props: ComboboxProps<T>) => 
     items: filteredOptions,
     itemToString,
     selectedItem,
+    isItemDisabled: (item) => !!item?.infoOption,
 
     // Don't change downshift state in the onBlahChange handlers. Instead, use the stateReducer to make changes.
     // Downshift calls change handlers on the render after so you can get sync/flickering issues if you change its state
@@ -277,6 +300,10 @@ export const Combobox = <T extends string | number>(props: ComboboxProps<T>) => 
     onIsOpenChange: ({ isOpen, inputValue }) => {
       if (isOpen && inputValue === '') {
         updateOptions(inputValue);
+      }
+
+      if (!isOpen) {
+        resetSearch();
       }
     },
 
@@ -369,6 +396,7 @@ export const Combobox = <T extends string | number>(props: ComboboxProps<T>) => 
       }
     : { Wrapper: React.Fragment };
 
+  const icon = selectedItem?.icon ?? prefixIcon;
   return (
     <Wrapper {...wrapperProps}>
       <InputComponent
@@ -376,6 +404,7 @@ export const Combobox = <T extends string | number>(props: ComboboxProps<T>) => 
         {...(isAutoSize ? { minWidth, maxWidth } : {})}
         autoFocus={autoFocus}
         onBlur={onBlur}
+        prefix={icon && <Icon name={icon} />}
         disabled={disabled}
         invalid={invalid}
         className={styles.input}
@@ -402,12 +431,14 @@ export const Combobox = <T extends string | number>(props: ComboboxProps<T>) => 
         >
           {isOpen && (
             <ComboboxList
+              loading={loading}
               options={filteredOptions}
               highlightedIndex={highlightedIndex}
               selectedItems={selectedItem ? [selectedItem] : []}
               scrollRef={scrollRef}
               getItemProps={getItemProps}
               error={asyncError}
+              noOptionsMessage={noOptionsMessage}
             />
           )}
         </div>

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	dashboard "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v1beta1"
+	dashboard "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v1"
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/apimachinery/utils"
 	"github.com/grafana/grafana/pkg/infra/log"
@@ -83,6 +83,7 @@ func TestWriteProvisioningEvent(t *testing.T) {
 	dashData := &dashboards.Dashboard{
 		Title:   "Test Dashboard",
 		Version: 2,
+		ID:      3,
 	}
 	dashBytes, err := json.Marshal(dashData)
 	require.NoError(t, err)
@@ -125,8 +126,12 @@ func TestWriteProvisioningEvent(t *testing.T) {
 	}
 
 	ctx := identity.WithRequester(context.Background(), &user.SignedInUser{})
+	ctx = WithLegacyAccess(ctx)
 	rv, err := access.WriteEvent(ctx, event)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), rv)
+	a := GetLegacyAccess(ctx)
+	require.NotNil(t, a)
+	require.Equal(t, int64(3), a.DashboardID)
 	mockStore.AssertExpectations(t)
 }

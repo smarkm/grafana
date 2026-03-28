@@ -31,6 +31,9 @@ export interface Props {
   openMenuOnFocus?: boolean;
 }
 
+/**
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/date-time-pickers-timezonepicker--docs
+ */
 export const TimeZonePicker = (props: Props) => {
   const {
     onChange,
@@ -42,7 +45,7 @@ export const TimeZonePicker = (props: Props) => {
     disabled = false,
     inputId,
     menuShouldPortal = true,
-    openMenuOnFocus = true,
+    openMenuOnFocus = false,
   } = props;
   const groupedTimeZones = useTimeZones(includeInternal);
   const selected = useSelectedTimeZone(groupedTimeZones, value);

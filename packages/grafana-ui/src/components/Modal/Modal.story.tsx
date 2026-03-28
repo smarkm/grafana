@@ -3,7 +3,6 @@ import { StoryFn, Meta } from '@storybook/react';
 import { oneLineTrim } from 'common-tags';
 import { useState } from 'react';
 
-import { getAvailableIcons } from '../../types/icon';
 import { Button } from '../Button/Button';
 import { TabContent } from '../Tabs/TabContent';
 
@@ -21,8 +20,6 @@ const meta: Meta = {
     controls: {
       exclude: ['className', 'contentClassName', 'onDismiss', 'onClickBackdrop'],
     },
-    // TODO fix a11y issue in story and remove this
-    a11y: { test: 'off' },
   },
   args: {
     body: oneLineTrim(`Id incididunt do pariatur qui labore. Sint culpa irure cillum et ullamco proident. Deserunt ipsum velit dolore est enim proident dolore consectetur. Et cillum tempor pariatur et. Est tempor cillum ad id nulla. Cillum ut proident
@@ -36,12 +33,6 @@ const meta: Meta = {
     amet.`),
   },
   argTypes: {
-    icon: {
-      control: {
-        type: 'select',
-        options: getAvailableIcons(),
-      },
-    },
     title: {
       control: {
         type: 'text',
@@ -65,10 +56,8 @@ export const Basic: StoryFn = ({ body, title, ...args }) => {
 };
 Basic.args = {
   title: 'My Modal',
-  icon: 'exclamation-triangle',
   isOpen: true,
   closeOnEscape: false,
-  iconTooltip: 'icon tooltip',
 };
 
 const tabs = [
@@ -82,7 +71,6 @@ export const WithTabs: StoryFn = (args) => {
   const modalHeader = (
     <ModalTabsHeader
       title={args.title}
-      icon={args.icon}
       tabs={tabs}
       activeTab={activeTab}
       onChangeTab={(t) => {
@@ -92,7 +80,7 @@ export const WithTabs: StoryFn = (args) => {
   );
   return (
     <div>
-      <Modal title={modalHeader} isOpen={true}>
+      <Modal ariaLabel={args.title} title={modalHeader} isOpen={true}>
         <TabContent>
           {activeTab === tabs[0].value && <div>{args.body}</div>}
           {activeTab === tabs[1].value && <div>Second tab content</div>}
@@ -110,7 +98,8 @@ WithTabs.args = {
 export const UsingContentClassName: StoryFn = ({ title, body, ...args }) => {
   const override = {
     modalContent: css({
-      backgroundColor: 'darkorange',
+      backgroundColor: 'red',
+      color: 'black',
     }),
   };
   return (
@@ -121,10 +110,8 @@ export const UsingContentClassName: StoryFn = ({ title, body, ...args }) => {
 };
 UsingContentClassName.args = {
   title: 'Using contentClassName to override background',
-  icon: 'exclamation-triangle',
   isOpen: true,
   closeOnEscape: false,
-  iconTooltip: 'icon tooltip',
 };
 
 export default meta;

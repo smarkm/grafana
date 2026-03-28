@@ -4,35 +4,65 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/grafana/grafana/pkg/util/testutil"
 )
 
-func TestPluginsIntegrationDiscovery(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+func TestIntegrationPluginsIntegrationDiscovery(t *testing.T) {
+	testutil.SkipIntegrationTestInShortMode(t)
 
 	t.Run("discovery", func(t *testing.T) {
 		helper := setupHelper(t)
-		disco := helper.GetGroupVersionInfoJSON("plugins.grafana.app")
+		disco, err := helper.GetGroupVersionInfoJSON("plugins.grafana.app")
+		require.NoError(t, err)
 		require.JSONEq(t, `[
 			{
 				"version": "v0alpha1",
 				"freshness": "Current",
 				"resources": [
 					{
-						"resource": "plugininstalls",
+						"resource": "metas",
 						"responseKind": {
 							"group": "",
-							"kind": "PluginInstall",
+							"kind": "Meta",
 							"version": ""
 						},
 						"scope": "Namespaced",
-						"singularResource": "plugininstalls",
+						"singularResource": "meta",
 						"subresources": [
 							{
 								"responseKind": {
 									"group": "",
-									"kind": "PluginInstall",
+									"kind": "Meta",
+									"version": ""
+								},
+								"subresource": "status",
+								"verbs": [
+									"get",
+									"patch",
+									"update"
+								]
+							}
+						],
+						"verbs": [
+							"get",
+							"list"
+						]
+					},
+					{
+						"resource": "plugins",
+						"responseKind": {
+							"group": "",
+							"kind": "Plugin",
+							"version": ""
+						},
+						"scope": "Namespaced",
+						"singularResource": "plugin",
+						"subresources": [
+							{
+								"responseKind": {
+									"group": "",
+									"kind": "Plugin",
 									"version": ""
 								},
 								"subresource": "status",
@@ -52,35 +82,6 @@ func TestPluginsIntegrationDiscovery(t *testing.T) {
 							"patch",
 							"update",
 							"watch"
-						]
-					},
-					{
-						"resource": "pluginmetas",
-						"responseKind": {
-							"group": "",
-							"kind": "PluginMeta",
-							"version": ""
-						},
-						"scope": "Namespaced",
-						"singularResource": "pluginmeta",
-						"subresources": [
-							{
-								"responseKind": {
-									"group": "",
-									"kind": "PluginMeta",
-									"version": ""
-								},
-								"subresource": "status",
-								"verbs": [
-									"get",
-									"patch",
-									"update"
-								]
-							}
-						],
-						"verbs": [
-							"get",
-							"list"
 						]
 					}
 				]

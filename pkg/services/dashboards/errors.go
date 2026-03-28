@@ -79,6 +79,11 @@ var (
 		Reason:     "message too long, max 500 characters",
 		StatusCode: 400,
 	}
+	ErrDashboardTagTooLong = dashboardaccess.DashboardErr{
+		Reason:     "dashboard tag too long, max 50 characters",
+		StatusCode: 400,
+		Status:     "tag-too-long",
+	}
 	ErrDashboardCannotSaveProvisionedDashboard = dashboardaccess.DashboardErr{
 		Reason:     "Cannot save provisioned dashboard",
 		StatusCode: 400,
@@ -105,6 +110,10 @@ var (
 	}
 	ErrDashboardOrPanelIdentifierNotSet = dashboardaccess.DashboardErr{
 		Reason:     "Unique identifier needed to be able to get a dashboard panel",
+		StatusCode: 400,
+	}
+	ErrDashboardRestoreIdenticalVersion = dashboardaccess.DashboardErr{
+		Reason:     "Current dashboard is identical to the specified version",
 		StatusCode: 400,
 	}
 	ErrProvisionedDashboardNotFound = dashboardaccess.DashboardErr{

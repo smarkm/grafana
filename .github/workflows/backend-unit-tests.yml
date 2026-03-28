@@ -24,7 +24,7 @@ jobs:
     outputs:
       changed: ${{ steps.detect-changes.outputs.backend }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: true # required to get more history in the changed-files action
           fetch-depth: 2
@@ -55,25 +55,23 @@ jobs:
       id-token: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Setup Go
-        uses: actions/setup-go@v5.5.0
-        with:
-          go-version-file: go.mod
+        uses: ./.github/actions/setup-go
       - name: Run unit tests
         env:
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
           readarray -t PACKAGES <<< "$(./scripts/ci/backend-tests/shard.sh -N"$SHARD")"
-          go test -short -timeout=30m "${PACKAGES[@]}"
+          CGO_ENABLED=0 go test -short -timeout=30m "${PACKAGES[@]}"
 
   grafana-enterprise:
     # Run this workflow for non-PR events (like pushes to `main` or `release-*`) OR for internal PRs (PRs not from forks)
     needs: detect-changes
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false && needs.detect-changes.outputs.changed == 'true'
+    if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false && needs.detect-changes.outputs.changed == 'true')
     strategy:
       matrix:
         shard: [
@@ -90,17 +88,17 @@ jobs:
     steps:
       # Set up repository clone
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - name: Setup Go
-        uses: actions/setup-go@v5.5.0
-        with:
-          go-version-file: go.mod
       - name: Setup Enterprise
         uses: ./.github/actions/setup-enterprise
         with:
           github-app-name: 'grafana-ci-bot'
+      # Enterprise must be cloned before setup-go so that enterprise
+      # modules are visible when the Go cache key is computed.
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
 
       # Prepare what we need to upload test results
       - run: echo "RESULTS_FILE=$(date --rfc-3339=seconds --utc | sed -s 's/ /-/g')_${SHARD/\//_}.xml" >> "$GITHUB_ENV"
@@ -118,7 +116,7 @@ jobs:
           readarray -t PACKAGES <<< "$(./scripts/ci/backend-tests/shard.sh -N"$SHARD")"
           # This tee requires pipefail to be set, otherwise `go test`'s exit code is thrown away.
           # That means having no `-o pipefail` => failing tests => exit code 0, which is wrong.
-          go test -short -timeout=30m "${PACKAGES[@]}"
+          CGO_ENABLED=0 go test -short -timeout=30m "${PACKAGES[@]}"
 
   # This is the job that is actually required by rulesets.
   # We need to require EITHER the OSS or the Enterprise job to pass.

@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"context"
 	"errors"
 	"sync"
 
@@ -12,8 +13,9 @@ const (
 	namespace = "grafana_secrets_manager"
 	subsystem = "storage"
 	// labels
-	successLabel = "success"
-	resultLabel  = "result"
+	successLabel   = "success"
+	resultLabel    = "result"
+	decrypterLabel = "decrypter"
 )
 
 // StorageMetrics is a struct that contains all the metrics for all operations of secrets storage.
@@ -25,11 +27,13 @@ type StorageMetrics struct {
 	KeeperMetadataListDuration            *prometheus.HistogramVec
 	KeeperMetadataGetKeeperConfigDuration *prometheus.HistogramVec
 
-	SecureValueMetadataCreateDuration *prometheus.HistogramVec
-	SecureValueMetadataGetDuration    *prometheus.HistogramVec
-	SecureValueMetadataListDuration   *prometheus.HistogramVec
-	SecureValueSetExternalIDDuration  *prometheus.HistogramVec
-	SecureValueSetStatusDuration      *prometheus.HistogramVec
+	SecureValueMetadataCreateDuration          *prometheus.HistogramVec
+	SecureValueMetadataGetDuration             *prometheus.HistogramVec
+	SecureValueMetadataListDuration            *prometheus.HistogramVec
+	SecureValueSetExternalIDDuration           *prometheus.HistogramVec
+	SecureValueSetStatusDuration               *prometheus.HistogramVec
+	SecureValueDeleteDuration                  *prometheus.HistogramVec
+	SecureValueSetInactiveAllFromGroupDuration *prometheus.HistogramVec
 
 	DecryptDuration *prometheus.HistogramVec
 }
@@ -116,6 +120,20 @@ func newStorageMetrics() *StorageMetrics {
 			Help:      "Duration of secure value set status operations",
 			Buckets:   prometheus.DefBuckets,
 		}, []string{successLabel}),
+		SecureValueDeleteDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "secure_value_delete_duration_seconds",
+			Help:      "Duration of secure value delete operations",
+			Buckets:   prometheus.DefBuckets,
+		}, []string{successLabel}),
+		SecureValueSetInactiveAllFromGroupDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "secure_value_set_inactive_all_from_group_duration_seconds",
+			Help:      "Duration of secure value set inactive all from group operations",
+			Buckets:   prometheus.DefBuckets,
+		}, []string{successLabel}),
 
 		// Decrypt metrics
 		DecryptDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -124,7 +142,7 @@ func newStorageMetrics() *StorageMetrics {
 			Name:      "decrypt_duration_seconds",
 			Help:      "Duration of decrypt operations",
 			Buckets:   prometheus.DefBuckets,
-		}, []string{resultLabel}),
+		}, []string{resultLabel, decrypterLabel}),
 	}
 }
 
@@ -151,6 +169,8 @@ func NewStorageMetrics(reg prometheus.Registerer) *StorageMetrics {
 				m.SecureValueMetadataListDuration,
 				m.SecureValueSetExternalIDDuration,
 				m.SecureValueSetStatusDuration,
+				m.SecureValueDeleteDuration,
+				m.SecureValueSetInactiveAllFromGroupDuration,
 				m.DecryptDuration,
 			)
 		}
@@ -175,6 +195,8 @@ func DecryptResultLabel(err error) string {
 		return "error_not_found"
 	} else if errors.Is(err, contracts.ErrDecryptNotAuthorized) {
 		return "error_unauthorized"
+	} else if errors.Is(err, context.Canceled) {
+		return "error_context_canceled"
 	}
 
 	return "error_generic_failure"

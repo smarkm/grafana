@@ -3,7 +3,7 @@ import { thunk } from 'redux-thunk';
 import { Subject } from 'rxjs';
 
 import { BackendSrv, FetchError, locationService, setEchoSrv } from '@grafana/runtime';
-import appEvents from 'app/core/app_events';
+import { appEvents } from 'app/core/app_events';
 import { getBackendSrv } from 'app/core/services/backend_srv';
 import { KeybindingSrv } from 'app/core/services/keybindingSrv';
 import { variableAdapters } from 'app/features/variables/adapters';
@@ -62,6 +62,13 @@ jest.mock('@grafana/data', () => {
     })),
   };
 });
+jest.mock('app/core/app_events', () => ({
+  ...jest.requireActual('app/core/app_events'),
+  appEvents: {
+    publish: jest.fn(),
+    subscribe: jest.fn(),
+  },
+}));
 
 variableAdapters.register(createConstantVariableAdapter());
 const mockStore = configureMockStore([thunk]);
@@ -289,6 +296,27 @@ describeInitScenario('Initializing home dashboard', (ctx) => {
   it('Should redirect to custom home dashboard', () => {
     const location = locationService.getLocation();
     expect(location.pathname).toBe('/u/123/my-home');
+  });
+});
+
+describeInitScenario('Initializing home dashboard with query params', (ctx) => {
+  ctx.setup(() => {
+    // Set initial location with query params
+    locationService.push('/?doc=some-query-value');
+
+    ctx.args.routeName = DashboardRoutes.Home;
+    ctx.backendSrv.get.mockResolvedValue({
+      redirectUri: '/a/custom-home-plugin?tab=recent',
+    });
+  });
+
+  it('Should preserve query params when redirecting to custom home dashboard', () => {
+    const location = locationService.getLocation();
+    expect(location.pathname).toBe('/a/custom-home-plugin');
+
+    const search = locationService.getSearch();
+    expect(search.get('doc')).toBe('some-query-value');
+    expect(search.get('tab')).toBe('recent');
   });
 });
 

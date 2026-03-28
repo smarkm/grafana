@@ -1,22 +1,26 @@
-import { useId, useMemo } from 'react';
+import { useBooleanFlagValue } from '@openfeature/react-sdk';
+import { useId, useMemo, useRef } from 'react';
 
 import { selectors } from '@grafana/e2e-selectors';
 import { Trans, t } from '@grafana/i18n';
-import { Alert, Input, Switch, TextLink, Field } from '@grafana/ui';
+import { Alert, Field, Input, Switch, TextLink } from '@grafana/ui';
 import { OptionsPaneCategoryDescriptor } from 'app/features/dashboard/components/PanelEditor/OptionsPaneCategoryDescriptor';
 import { OptionsPaneItemDescriptor } from 'app/features/dashboard/components/PanelEditor/OptionsPaneItemDescriptor';
 import { RepeatRowSelect2 } from 'app/features/dashboard/components/RepeatRowSelect/RepeatRowSelect';
 import { SHARED_DASHBOARD_QUERY } from 'app/plugins/datasource/dashboard/constants';
 import { MIXED_DATASOURCE_NAME } from 'app/plugins/datasource/mixed/MixedDataSource';
 
-import { useConditionalRenderingEditor } from '../../conditional-rendering/ConditionalRenderingEditor';
-import { getQueryRunnerFor, useDashboard } from '../../utils/utils';
+import { useConditionalRenderingEditor } from '../../conditional-rendering/hooks/useConditionalRenderingEditor';
+import { SectionVariablesCategoryTitle, SectionVariablesList } from '../../edit-pane/SectionVariablesList';
+import { dashboardEditActions } from '../../edit-pane/shared';
+import { getQueryRunnerFor } from '../../utils/utils';
 import { useLayoutCategory } from '../layouts-shared/DashboardLayoutSelector';
-import { useEditPaneInputAutoFocus } from '../layouts-shared/utils';
+import { generateUniqueTitle, useEditPaneInputAutoFocus } from '../layouts-shared/utils';
 
 import { RowItem } from './RowItem';
 
-export function useEditOptions(model: RowItem, isNewElement: boolean): OptionsPaneCategoryDescriptor[] {
+export function useEditOptions(this: RowItem, isNewElement: boolean): OptionsPaneCategoryDescriptor[] {
+  const model = this;
   const { layout } = model.useState();
 
   const rowCategory = useMemo(
@@ -44,7 +48,7 @@ export function useEditOptions(model: RowItem, isNewElement: boolean): OptionsPa
             render: (descriptor) => <RowHeaderSwitch id={descriptor.props.id} row={model} />,
           })
         ),
-    [model, isNewElement]
+    [isNewElement, model]
   );
 
   const repeatCategory = useMemo(
@@ -56,7 +60,7 @@ export function useEditOptions(model: RowItem, isNewElement: boolean): OptionsPa
       }).addItem(
         new OptionsPaneItemDescriptor({
           title: t('dashboard.rows-layout.row-options.repeat.variable.title', 'Repeat by variable'),
-          id: `dash-row-repeat-by-variable`,
+          id: 'dash-row-repeat-by-variable',
           description: t(
             'dashboard.rows-layout.row-options.repeat.variable.description',
             'Repeat this row for each value in the selected variable.'
@@ -69,7 +73,32 @@ export function useEditOptions(model: RowItem, isNewElement: boolean): OptionsPa
 
   const layoutCategory = useLayoutCategory(layout);
 
-  const editOptions = [rowCategory, ...layoutCategory, repeatCategory];
+  const sectionVariablesEnabled = useBooleanFlagValue('dashboardSectionVariables', false);
+  const sectionVariablesCategory = useMemo(() => {
+    const category = new OptionsPaneCategoryDescriptor({
+      title: t('dashboard.rows-layout.row-options.section-variables.title', 'Variables'),
+      id: 'dash-row-section-variables',
+      isOpenDefault: true,
+      renderTitle: (isExpanded: boolean) => (
+        <SectionVariablesCategoryTitle sectionOwner={model} isExpanded={isExpanded} />
+      ),
+    });
+
+    category.addItem(
+      new OptionsPaneItemDescriptor({
+        title: '',
+        id: 'dash-row-section-variables-list',
+        skipField: true,
+        render: () => <SectionVariablesList sectionOwner={model} />,
+      })
+    );
+
+    return category;
+  }, [model]);
+
+  const editOptions = sectionVariablesEnabled
+    ? [rowCategory, sectionVariablesCategory, ...layoutCategory, repeatCategory]
+    : [rowCategory, ...layoutCategory, repeatCategory];
 
   const conditionalRenderingCategory = useMemo(
     () => useConditionalRenderingEditor(model.state.conditionalRendering),
@@ -85,6 +114,7 @@ export function useEditOptions(model: RowItem, isNewElement: boolean): OptionsPa
 
 function RowTitleInput({ row, isNewElement }: { row: RowItem; isNewElement: boolean }) {
   const { title } = row.useState();
+  const prevTitle = useRef('');
 
   const ref = useEditPaneInputAutoFocus({ autoFocus: isNewElement });
   const hasUniqueTitle = row.hasUniqueTitle();
@@ -102,7 +132,10 @@ function RowTitleInput({ row, isNewElement }: { row: RowItem; isNewElement: bool
         ref={ref}
         title={t('dashboard.rows-layout.row-options.title-option', 'Title')}
         value={title}
+        onFocus={() => (prevTitle.current = title || '')}
+        onBlur={() => editRowTitleAction(row, title || '', prevTitle.current || '')}
         onChange={(e) => row.onChangeTitle(e.currentTarget.value)}
+        data-testid={selectors.components.PanelEditor.ElementEditPane.RowsLayout.titleInput}
       />
     </Field>
   );
@@ -122,7 +155,6 @@ function FillScreenSwitch({ row, id }: { row: RowItem; id?: string }) {
 
 function RowRepeatSelect({ row, id }: { row: RowItem; id?: string }) {
   const { layout } = row.useState();
-  const dashboard = useDashboard(row);
 
   const isAnyPanelUsingDashboardDS = layout.getVizPanels().some((vizPanel) => {
     const runner = getQueryRunnerFor(vizPanel);
@@ -137,7 +169,7 @@ function RowRepeatSelect({ row, id }: { row: RowItem; id?: string }) {
     <>
       <RepeatRowSelect2
         id={id}
-        sceneContext={dashboard}
+        sceneContext={row}
         repeat={row.state.repeatByVariable}
         onChange={(repeat) => row.onChangeRepeat(repeat)}
       />
@@ -167,4 +199,25 @@ function RowRepeatSelect({ row, id }: { row: RowItem; id?: string }) {
       ) : undefined}
     </>
   );
+}
+
+function editRowTitleAction(row: RowItem, title: string, prevTitle: string) {
+  if (title !== '' && title === prevTitle) {
+    return;
+  }
+
+  if (title === '') {
+    const rowsLayout = row.getParentLayout();
+    const existingNames = new Set(
+      rowsLayout.state.rows.map((row) => row.state.title).filter((title) => title !== undefined)
+    );
+    title = generateUniqueTitle('New row', existingNames);
+  }
+
+  dashboardEditActions.edit({
+    description: t('dashboard.edit-actions.row-title', 'Change row title'),
+    source: row,
+    perform: () => row.onChangeTitle(title),
+    undo: () => row.onChangeTitle(prevTitle),
+  });
 }

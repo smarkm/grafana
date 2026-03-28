@@ -1,49 +1,61 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { of } from 'rxjs';
 
 import {
+  createDataFrame,
+  DataFrame,
+  DataFrameType,
+  dateTime,
   Field,
+  FieldType,
   LogLevel,
   LogRowModel,
-  FieldType,
-  createDataFrame,
-  DataFrameType,
-  PluginExtensionPoints,
-  toDataFrame,
   LogsSortOrder,
-  DataFrame,
+  PluginExtensionPoints,
   ScopedVars,
-  getDefaultTimeRange,
+  toDataFrame,
 } from '@grafana/data';
-import { setPluginLinksHook } from '@grafana/runtime';
+import { DataSourceSrv, getDataSourceSrv, setPluginLinksHook, usePluginLinks } from '@grafana/runtime';
+import { createLokiDatasource } from 'app/plugins/datasource/loki/mocks/datasource';
 import { createTempoDatasource } from 'app/plugins/datasource/tempo/test/mocks';
 
-import { LOG_LINE_BODY_FIELD_NAME } from '../LogDetailsBody';
+import { DATAPLANE_LABEL_TYPES_NAME, DATAPLANE_LABELS_NAME } from '../../logsFrame';
+import { getFieldSelectorWidth } from '../fieldSelector/fieldSelectorUtils';
+import { LOG_LINE_BODY_FIELD_NAME } from '../fieldSelector/logFields';
 import { createLogLine } from '../mocks/logRow';
 
+import { emptyContextData, LogDetailsContext, LogDetailsContextData } from './LogDetailsContext';
 import { LogLineDetails, Props } from './LogLineDetails';
 import { LogListContext, LogListContextData } from './LogListContext';
 import { defaultValue } from './__mocks__/LogListContext';
 
+jest.mock('@openfeature/react-sdk', () => ({
+  useBooleanFlagValue: jest.fn().mockReturnValue(false),
+}));
+
+jest.mock('../fieldSelector/FieldSelector');
+jest.mock('../fieldSelector/fieldSelectorUtils');
+
+jest.mocked(getFieldSelectorWidth).mockReturnValue(220);
+
 jest.mock('@grafana/assistant', () => {
   return {
     ...jest.requireActual('@grafana/assistant'),
-    useAssistant: jest.fn().mockReturnValue([true, jest.fn()]),
-  };
-});
-
-const tempoDS = createTempoDatasource();
-
-jest.mock('@grafana/runtime', () => {
-  return {
-    ...jest.requireActual('@grafana/runtime'),
-    usePluginLinks: jest.fn().mockReturnValue({ links: [] }),
-    getDataSourceSrv: () => ({
-      get: (uid: string) => Promise.resolve(tempoDS),
+    useAssistant: jest.fn().mockReturnValue({
+      isLoading: false,
+      isAvailable: true,
+      openAssistant: jest.fn(),
     }),
   };
 });
+
+jest.mock('@grafana/runtime', () => ({
+  ...jest.requireActual('@grafana/runtime'),
+  getDataSourceSrv: jest.fn(),
+  usePluginLinks: jest.fn(),
+}));
+
 jest.mock('./LogListContext');
 jest.mock('app/features/explore/TraceView/TraceView', () => ({
   TraceView: () => <div>Trace view</div>,
@@ -53,45 +65,168 @@ afterAll(() => {
   jest.unmock('app/features/explore/TraceView/TraceView');
 });
 
-const setup = (
+let lokiDS = createLokiDatasource(undefined, { uid: 'loki-ds' });
+let tempoDS = createTempoDatasource(undefined, { uid: 'tempo-ds' });
+
+const setup = async (
   propOverrides?: Partial<Props>,
   rowOverrides?: Partial<LogRowModel>,
-  contextOverrides?: Partial<LogListContextData>
+  logListcontextOverrides?: Partial<LogListContextData>,
+  logDetailsContextOverrides?: Partial<LogDetailsContextData>,
+  renderCompleteText: string | RegExp = 'Log line'
 ) => {
-  const logs = [createLogLine({ logLevel: LogLevel.error, timeEpochMs: 1546297200000, ...rowOverrides })];
+  const logs = [
+    createLogLine({
+      logLevel: LogLevel.error,
+      timeEpochMs: 1546297200000,
+      datasourceUid: lokiDS.uid,
+      ...rowOverrides,
+    }),
+  ];
 
   const props: Props = {
     containerElement: document.createElement('div'),
     focusLogLine: jest.fn(),
     logs,
-    onResize: jest.fn(),
-    timeRange: getDefaultTimeRange(),
+    timeRange: {
+      from: dateTime(1757937009041),
+      to: dateTime(1757940609041),
+      raw: {
+        from: 'now-1h',
+        to: 'now',
+      },
+    },
     timeZone: 'browser',
+    showControls: true,
+    showFieldSelector: true,
     ...(propOverrides || {}),
   };
 
   const contextData: LogListContextData = {
     ...defaultValue,
-    showDetails: logs,
-    ...contextOverrides,
+    ...logListcontextOverrides,
   };
 
-  return render(
+  const detailsData: LogDetailsContextData = {
+    ...emptyContextData,
+    enableLogDetails: true,
+    showDetails: logs,
+    currentLog: logs[0],
+    ...logDetailsContextOverrides,
+  };
+
+  const result = render(
     <LogListContext.Provider value={contextData}>
-      <LogLineDetails {...props} />
+      <LogDetailsContext.Provider value={detailsData}>
+        <LogLineDetails {...props} />
+      </LogDetailsContext.Provider>
     </LogListContext.Provider>
   );
+
+  if (renderCompleteText) {
+    // Don't want for empty cases
+    await waitFor(() => {
+      expect(screen.getByText(renderCompleteText)).toBeInTheDocument();
+    });
+  }
+
+  return result;
 };
 
 describe('LogLineDetails', () => {
+  beforeEach(() => {
+    lokiDS = createLokiDatasource(undefined, { uid: 'loki-ds' });
+    tempoDS = createTempoDatasource(undefined, { uid: 'tempo-ds' });
+    jest.mocked(usePluginLinks).mockReturnValue({
+      links: [],
+      isLoading: false,
+    });
+    jest.mocked(getDataSourceSrv).mockImplementation(
+      () =>
+        ({
+          get: (uid: string) => {
+            if (uid === 'loki-ds') {
+              return Promise.resolve(lokiDS);
+            } else if (uid === 'tempo-ds') {
+              return Promise.resolve(tempoDS);
+            }
+            return Promise.resolve(null);
+          },
+        }) as unknown as DataSourceSrv
+    );
+  });
+
+  describe('Toggleable filters', () => {
+    test('should pass the log row to Explore filter functions', async () => {
+      const onClickFilterLabelMock = jest.fn();
+      const onClickFilterOutLabelMock = jest.fn();
+      const isLabelFilterActiveMock = jest.fn().mockResolvedValue(true);
+      const log = createLogLine({
+        logLevel: LogLevel.error,
+        timeEpochMs: 1546297200000,
+        labels: { key1: 'label1' },
+        datasourceUid: lokiDS.uid,
+      });
+
+      await setup(
+        {
+          logs: [log],
+        },
+        undefined,
+        {
+          onClickFilterLabel: onClickFilterLabelMock,
+          onClickFilterOutLabel: onClickFilterOutLabelMock,
+          isLabelFilterActive: isLabelFilterActiveMock,
+        },
+        {
+          showDetails: [log],
+          currentLog: log,
+        }
+      );
+
+      expect(isLabelFilterActiveMock).toHaveBeenCalledWith('key1', 'label1', log.dataFrame.refId);
+
+      waitFor(() => expect(screen.getByLabelText(/Remove filter in query A/)).toBeInTheDocument());
+      await userEvent.click(screen.getByLabelText(/Remove filter in query A/));
+      expect(onClickFilterLabelMock).toHaveBeenCalledTimes(1);
+      expect(onClickFilterLabelMock).toHaveBeenCalledWith(
+        'key1',
+        'label1',
+        expect.objectContaining({
+          fields: [
+            expect.objectContaining({ values: [0] }),
+            expect.objectContaining({ values: ['line1'] }),
+            expect.objectContaining({ values: [{ app: 'app01' }] }),
+          ],
+          length: 1,
+        })
+      );
+
+      await userEvent.click(screen.getByLabelText('Filter out value in query A'));
+      expect(onClickFilterOutLabelMock).toHaveBeenCalledTimes(1);
+      expect(onClickFilterOutLabelMock).toHaveBeenCalledWith(
+        'key1',
+        'label1',
+        expect.objectContaining({
+          fields: [
+            expect.objectContaining({ values: [0] }),
+            expect.objectContaining({ values: ['line1'] }),
+            expect.objectContaining({ values: [{ app: 'app01' }] }),
+          ],
+          length: 1,
+        })
+      );
+    });
+  });
   describe('when fields are present', () => {
-    test('should render the fields and the log line', () => {
-      setup(undefined, { labels: { key1: 'label1', key2: 'label2' } });
+    test('should render the fields and the log line', async () => {
+      await setup(undefined, { labels: { key1: 'label1', key2: 'label2' } });
       expect(screen.getByText('Log line')).toBeInTheDocument();
       expect(screen.getByText('Fields')).toBeInTheDocument();
     });
-    test('fields should be visible by default', () => {
-      setup(undefined, { labels: { key1: 'label1', key2: 'label2' } });
+
+    test('fields should be visible by default', async () => {
+      await setup(undefined, { labels: { key1: 'label1', key2: 'label2' } });
       expect(screen.getByText('key1')).toBeInTheDocument();
       expect(screen.getByText('label1')).toBeInTheDocument();
       expect(screen.getByText('key2')).toBeInTheDocument();
@@ -100,7 +235,7 @@ describe('LogLineDetails', () => {
     test('should show an option to display the log line when displayed fields are used', async () => {
       const onClickShowField = jest.fn();
 
-      setup(
+      await setup(
         undefined,
         { labels: { key1: 'label1' } },
         { displayedFields: ['key1'], onClickShowField, onClickHideField: jest.fn() }
@@ -115,7 +250,7 @@ describe('LogLineDetails', () => {
     test('should show an active option to display the log line when displayed fields are used', async () => {
       const onClickHideField = jest.fn();
 
-      setup(
+      await setup(
         undefined,
         { labels: { key1: 'label1' } },
         { displayedFields: ['key1', LOG_LINE_BODY_FIELD_NAME], onClickHideField, onClickShowField: jest.fn() }
@@ -127,13 +262,13 @@ describe('LogLineDetails', () => {
 
       expect(onClickHideField).toHaveBeenCalledTimes(1);
     });
-    test('should not show an option to display the log line when displayed fields are not used', () => {
-      setup(undefined, { labels: { key1: 'label1' } }, { displayedFields: [] });
+    test('should not show an option to display the log line when displayed fields are not used', async () => {
+      await setup(undefined, { labels: { key1: 'label1' } }, { displayedFields: [] });
       expect(screen.getByText('key1')).toBeInTheDocument();
       expect(screen.queryByLabelText('Show log line')).not.toBeInTheDocument();
     });
-    test('should render the filter controls when the callbacks are provided', () => {
-      setup(
+    test('should render the filter controls when the callbacks are provided', async () => {
+      await setup(
         undefined,
         { labels: { key1: 'label1' } },
         {
@@ -144,65 +279,9 @@ describe('LogLineDetails', () => {
       expect(screen.getByLabelText('Filter for value in query A')).toBeInTheDocument();
       expect(screen.getByLabelText('Filter out value in query A')).toBeInTheDocument();
     });
-    describe('Toggleable filters', () => {
-      test('should pass the log row to Explore filter functions', async () => {
-        const onClickFilterLabelMock = jest.fn();
-        const onClickFilterOutLabelMock = jest.fn();
-        const isLabelFilterActiveMock = jest.fn().mockResolvedValue(true);
-        const log = createLogLine({
-          logLevel: LogLevel.error,
-          timeEpochMs: 1546297200000,
-          labels: { key1: 'label1' },
-        });
 
-        setup(
-          {
-            logs: [log],
-          },
-          undefined,
-          {
-            onClickFilterLabel: onClickFilterLabelMock,
-            onClickFilterOutLabel: onClickFilterOutLabelMock,
-            isLabelFilterActive: isLabelFilterActiveMock,
-            showDetails: [log],
-          }
-        );
-
-        expect(isLabelFilterActiveMock).toHaveBeenCalledWith('key1', 'label1', log.dataFrame.refId);
-
-        await userEvent.click(screen.getByLabelText('Filter for value in query A'));
-        expect(onClickFilterLabelMock).toHaveBeenCalledTimes(1);
-        expect(onClickFilterLabelMock).toHaveBeenCalledWith(
-          'key1',
-          'label1',
-          expect.objectContaining({
-            fields: [
-              expect.objectContaining({ values: [0] }),
-              expect.objectContaining({ values: ['line1'] }),
-              expect.objectContaining({ values: [{ app: 'app01' }] }),
-            ],
-            length: 1,
-          })
-        );
-
-        await userEvent.click(screen.getByLabelText('Filter out value in query A'));
-        expect(onClickFilterOutLabelMock).toHaveBeenCalledTimes(1);
-        expect(onClickFilterOutLabelMock).toHaveBeenCalledWith(
-          'key1',
-          'label1',
-          expect.objectContaining({
-            fields: [
-              expect.objectContaining({ values: [0] }),
-              expect.objectContaining({ values: ['line1'] }),
-              expect.objectContaining({ values: [{ app: 'app01' }] }),
-            ],
-            length: 1,
-          })
-        );
-      });
-    });
-    test('should not render filter controls when the callbacks are not provided', () => {
-      setup(
+    test('should not render filter controls when the callbacks are not provided', async () => {
+      await setup(
         undefined,
         { labels: { key1: 'label1' } },
         {
@@ -215,8 +294,8 @@ describe('LogLineDetails', () => {
     });
   });
   describe('when the log has no fields to display', () => {
-    test('should render no details available message', () => {
-      setup(undefined, { entry: '' });
+    test('should render no details available message', async () => {
+      await setup(undefined, { entry: '' });
       expect(screen.getByText('No fields to display.')).toBeInTheDocument();
     });
     test('should not render headings', () => {
@@ -228,7 +307,7 @@ describe('LogLineDetails', () => {
       expect(screen.queryByText('Structured metadata')).not.toBeInTheDocument();
     });
   });
-  test('should render fields from the dataframe with links', () => {
+  test('should render fields from the dataframe with links', async () => {
     const entry = 'traceId=1234 msg="some message"';
     const dataFrame = toDataFrame({
       fields: [
@@ -267,16 +346,20 @@ describe('LogLineDetails', () => {
       }
     );
 
-    setup({ logs: [log] }, undefined, { showDetails: [log] });
+    await setup({ logs: [log] }, undefined, undefined, { showDetails: [log], currentLog: log });
 
     expect(screen.getByText('Fields')).toBeInTheDocument();
     expect(screen.getByText('Links')).toBeInTheDocument();
     expect(screen.getByText('traceId')).toBeInTheDocument();
     expect(screen.getByText('link title')).toBeInTheDocument();
+    expect(screen.queryByText('1234')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText('Link value'));
+
     expect(screen.getByText('1234')).toBeInTheDocument();
   });
 
-  test('should show the correct log details fields, links and labels for DataFrameType.LogLines frames', () => {
+  test('should show the correct log details fields, links and labels for DataFrameType.LogLines frames', async () => {
     const entry = 'test';
     const dataFrame = createDataFrame({
       fields: [
@@ -309,7 +392,7 @@ describe('LogLineDetails', () => {
     });
 
     const log = createLogLine(
-      { entry, dataFrame, entryFieldIndex: 0, rowIndex: 0, labels: { label1: 'value1' } },
+      { entry, dataFrame, entryFieldIndex: 0, rowIndex: 0, labels: { label1: 'value1' }, datasourceUid: tempoDS.uid },
       {
         escape: false,
         order: LogsSortOrder.Descending,
@@ -332,7 +415,7 @@ describe('LogLineDetails', () => {
       }
     );
 
-    setup({ logs: [log] }, undefined, { showDetails: [log] });
+    await setup({ logs: [log] }, undefined, undefined, { showDetails: [log], currentLog: log });
 
     expect(screen.getByText('Log line')).toBeInTheDocument();
     expect(screen.getByText('Fields')).toBeInTheDocument();
@@ -346,7 +429,6 @@ describe('LogLineDetails', () => {
     expect(screen.getByText('label1')).toBeInTheDocument();
     expect(screen.getByText('value1')).toBeInTheDocument();
     expect(screen.getByText('shouldShowLinkName')).toBeInTheDocument();
-    expect(screen.getByText('shouldShowLinkValue')).toBeInTheDocument();
   });
 
   test('should load plugin links for logs view resource attributes extension point', () => {
@@ -369,180 +451,284 @@ describe('LogLineDetails', () => {
           type: 'loki',
           uid: 'grafanacloud-logs',
         },
+        timeRange: {
+          from: 1757937009041,
+          to: 1757940609041,
+        },
         attributes: { key1: ['label1'], key2: ['label2'] },
       },
     });
   });
 
   describe('Label types', () => {
-    const entry = 'test';
-    const labels = {
-      label1: 'value1',
-      label2: 'value2',
-      label3: 'value3',
-    };
-    const dataFrame = createDataFrame({
-      fields: [
-        { name: 'timestamp', config: {}, type: FieldType.time, values: [1] },
-        { name: 'body', type: FieldType.string, values: [entry] },
-        { name: 'id', type: FieldType.string, values: ['1'] },
-        {
-          name: 'labels',
-          type: FieldType.other,
-          values: [labels],
+    describe('Custom label types', () => {
+      const entry = 'test';
+      const labels = {
+        label1: 'value1',
+        label2: 'value2',
+        label3: 'value3',
+      };
+      const dataFrame = createDataFrame({
+        fields: [
+          { name: 'timestamp', config: {}, type: FieldType.time, values: [1] },
+          { name: 'body', type: FieldType.string, values: [entry] },
+          { name: 'id', type: FieldType.string, values: ['1'] },
+          {
+            name: DATAPLANE_LABELS_NAME,
+            type: FieldType.other,
+            values: [labels],
+          },
+          {
+            name: DATAPLANE_LABEL_TYPES_NAME,
+            type: FieldType.other,
+            values: [
+              {
+                label1: 'I',
+                label2: 'S',
+                label3: 'P',
+              },
+            ],
+          },
+        ],
+        meta: {
+          type: DataFrameType.LogLines,
         },
-        {
-          name: 'labelTypes',
-          type: FieldType.other,
-          values: [
-            {
-              label1: 'I',
-              label2: 'S',
-              label3: 'P',
-            },
-          ],
-        },
-      ],
-      meta: {
-        type: DataFrameType.LogLines,
-      },
-    });
-    test('should show label types if they are available and supported', () => {
-      setup(undefined, {
-        entry,
-        dataFrame,
-        entryFieldIndex: 0,
-        rowIndex: 0,
-        labels,
-        datasourceType: 'loki',
-        rowId: '1',
       });
 
-      // Show labels and links
-      expect(screen.getByText('label1')).toBeInTheDocument();
-      expect(screen.getByText('value1')).toBeInTheDocument();
-      expect(screen.getByText('label2')).toBeInTheDocument();
-      expect(screen.getByText('value2')).toBeInTheDocument();
-      expect(screen.getByText('label3')).toBeInTheDocument();
-      expect(screen.getByText('value3')).toBeInTheDocument();
-      expect(screen.getByText(/Indexed label/)).toBeInTheDocument();
-      expect(screen.getByText(/Parsed field/)).toBeInTheDocument();
-      expect(screen.getByText('Structured metadata')).toBeInTheDocument();
-    });
-    test('should not show label types if they are unavailable or not supported', () => {
-      setup(
-        {},
-        {
-          entry,
-          dataFrame,
-          entryFieldIndex: 0,
-          rowIndex: 0,
-          labels,
-          datasourceType: 'other datasource',
-          rowId: '1',
-        }
-      );
+      test('should show label types if they are available and supported by the data source', async () => {
+        lokiDS.getLabelDisplayTypeFromFrame = jest
+          .fn()
+          .mockImplementation((key: string, frame: DataFrame | undefined, index: number | null) => {
+            if (key === 'label1') {
+              return 'Indexed label';
+            }
+            if (key === 'label2') {
+              return 'Structured metadata';
+            }
+            if (key === 'label3') {
+              return 'Parsed field';
+            }
+            return null;
+          });
 
-      // Show labels and links
-      expect(screen.getByText('label1')).toBeInTheDocument();
-      expect(screen.getByText('value1')).toBeInTheDocument();
-      expect(screen.getByText('label2')).toBeInTheDocument();
-      expect(screen.getByText('value2')).toBeInTheDocument();
-      expect(screen.getByText('label3')).toBeInTheDocument();
-      expect(screen.getByText('value3')).toBeInTheDocument();
+        await setup(
+          undefined,
+          {
+            entry,
+            dataFrame,
+            entryFieldIndex: 0,
+            datasourceUid: 'loki-ds',
+            rowIndex: 0,
+            labels,
+            rowId: '1',
+          },
+          undefined,
+          undefined,
+          'Indexed label'
+        );
 
-      expect(screen.getByText('Fields')).toBeInTheDocument();
-      expect(screen.queryByText(/Indexed label/)).not.toBeInTheDocument();
-      expect(screen.queryByText(/Parsed field/)).not.toBeInTheDocument();
-      expect(screen.queryByText('Structured metadata')).not.toBeInTheDocument();
-    });
-
-    test('Should allow to search within fields', async () => {
-      setup(undefined, {
-        entry,
-        dataFrame,
-        entryFieldIndex: 0,
-        rowIndex: 0,
-        labels,
-        datasourceType: 'loki',
-        rowId: '1',
+        // Show labels and links
+        expect(screen.getByText('label1')).toBeInTheDocument();
+        expect(screen.getByText('value1')).toBeInTheDocument();
+        expect(screen.getByText('label2')).toBeInTheDocument();
+        expect(screen.getByText('value2')).toBeInTheDocument();
+        expect(screen.getByText('label3')).toBeInTheDocument();
+        expect(screen.getByText('value3')).toBeInTheDocument();
+        expect(screen.getByText(/Indexed label/)).toBeInTheDocument();
+        expect(screen.getByText(/Parsed field/)).toBeInTheDocument();
+        expect(screen.getByText('Structured metadata')).toBeInTheDocument();
       });
 
-      expect(screen.getByText('label1')).toBeInTheDocument();
-      expect(screen.getByText('value1')).toBeInTheDocument();
-      expect(screen.getByText('label2')).toBeInTheDocument();
-      expect(screen.getByText('value2')).toBeInTheDocument();
-      expect(screen.getByText('label3')).toBeInTheDocument();
-      expect(screen.getByText('value3')).toBeInTheDocument();
+      test('should fall back to the data plane labelType field if present', async () => {
+        await setup(
+          undefined,
+          {
+            entry,
+            dataFrame,
+            datasourceUid: 'tempo-ds',
+            datasourceType: 'loki',
+            entryFieldIndex: 0,
+            rowIndex: 0,
+            labels,
+            rowId: '1',
+          },
+          undefined,
+          undefined,
+          /Indexed label/
+        );
 
-      const input = screen.getByPlaceholderText('Search field names and values');
+        // Show labels and links
+        expect(screen.getByText('label1')).toBeInTheDocument();
+        expect(screen.getByText('value1')).toBeInTheDocument();
+        expect(screen.getByText('label2')).toBeInTheDocument();
+        expect(screen.getByText('value2')).toBeInTheDocument();
+        expect(screen.getByText('label3')).toBeInTheDocument();
+        expect(screen.getByText('value3')).toBeInTheDocument();
+        expect(screen.getByText(/Indexed label/)).toBeInTheDocument();
+        expect(screen.getByText(/Parsed field/)).toBeInTheDocument();
+        expect(screen.getByText('Structured metadata')).toBeInTheDocument();
+      });
 
-      await userEvent.type(input, 'something else');
+      test('should fallback to a single group of Fields if not supported', async () => {
+        jest.requireMock('@grafana/runtime').getDataSourceSrv = jest.fn().mockImplementation(() => ({
+          get: (uid: string) => Promise.reject(null),
+        }));
 
-      expect(screen.getAllByText('No results to display.')).toHaveLength(3);
+        await setup(
+          undefined,
+          {
+            entry,
+            dataFrame,
+            datasourceUid: 'loki-ds',
+            entryFieldIndex: 0,
+            rowIndex: 0,
+            labels,
+            rowId: '1',
+          },
+          undefined,
+          undefined,
+          'Fields'
+        );
+
+        // Show labels and links
+        expect(screen.getByText('label1')).toBeInTheDocument();
+        expect(screen.getByText('value1')).toBeInTheDocument();
+        expect(screen.getByText('label2')).toBeInTheDocument();
+        expect(screen.getByText('value2')).toBeInTheDocument();
+        expect(screen.getByText('label3')).toBeInTheDocument();
+        expect(screen.getByText('value3')).toBeInTheDocument();
+        expect(screen.queryByText('Fields')).toBeInTheDocument();
+        expect(screen.queryByText(/Indexed label/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Parsed field/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Structured metadata/)).not.toBeInTheDocument();
+      });
+
+      test('Should allow to search within fields', async () => {
+        await setup(
+          undefined,
+          {
+            entry,
+            dataFrame,
+            entryFieldIndex: 0,
+            rowIndex: 0,
+            labels,
+            datasourceUid: 'loki-ds',
+            datasourceType: 'loki',
+            rowId: '1',
+          },
+          undefined,
+          undefined,
+          /Indexed label/
+        );
+
+        expect(screen.getByText('label1')).toBeInTheDocument();
+        expect(screen.getByText('value1')).toBeInTheDocument();
+        expect(screen.getByText('label2')).toBeInTheDocument();
+        expect(screen.getByText('value2')).toBeInTheDocument();
+        expect(screen.getByText('label3')).toBeInTheDocument();
+        expect(screen.getByText('value3')).toBeInTheDocument();
+
+        const input = screen.getByPlaceholderText('Search field names and values');
+
+        await userEvent.type(input, 'something else');
+
+        expect(screen.getAllByText('No results to display.')).toHaveLength(3);
+      });
     });
-  });
+    describe('Default label types', () => {
+      test('Does not show displayed fields controls if not present', async () => {
+        await setup(undefined, { labels: { key1: 'label1', key2: 'label2' } });
+        expect(screen.queryByText('Displayed fields')).not.toBeInTheDocument();
+      });
 
-  describe('Label types', () => {
-    test('Does not show displayed fields controls if not present', () => {
-      setup(undefined, { labels: { key1: 'label1', key2: 'label2' } });
-      expect(screen.queryByText('Displayed fields')).not.toBeInTheDocument();
-    });
+      test('Does not show displayed fields controls if required props are not present', async () => {
+        await setup(undefined, { labels: { key1: 'label1', key2: 'label2' } }, { displayedFields: ['key1', 'key2'] });
+        expect(screen.queryByText('Displayed fields')).not.toBeInTheDocument();
+      });
 
-    test('Does not show displayed fields controls if required props are not present', () => {
-      setup(undefined, { labels: { key1: 'label1', key2: 'label2' } }, { displayedFields: ['key1', 'key2'] });
-      expect(screen.queryByText('Displayed fields')).not.toBeInTheDocument();
-    });
+      test('Shows displayed fields controls if required props are present', async () => {
+        const setDisplayedFields = jest.fn();
+        const onClickHideField = jest.fn();
+        await setup(
+          undefined,
+          { labels: { key1: 'label1', key2: 'label2' } },
+          { displayedFields: ['key1', 'key2'], setDisplayedFields, onClickHideField }
+        );
 
-    test('Shows displayed fields controls if required props are present', async () => {
-      const setDisplayedFields = jest.fn();
-      const onClickHideField = jest.fn();
-      setup(
-        undefined,
-        { labels: { key1: 'label1', key2: 'label2' } },
-        { displayedFields: ['key1', 'key2'], setDisplayedFields, onClickHideField }
-      );
+        expect(screen.getByText('Organize displayed fields')).toBeInTheDocument();
+        expect(screen.queryAllByLabelText('Remove field')).toHaveLength(0);
 
-      expect(screen.getByText('Organize displayed fields')).toBeInTheDocument();
-      expect(screen.queryAllByLabelText('Remove field')).toHaveLength(0);
+        await userEvent.click(screen.getByText('Organize displayed fields'));
 
-      await userEvent.click(screen.getByText('Organize displayed fields'));
+        expect(screen.getAllByLabelText('Remove field')).toHaveLength(2);
 
-      expect(screen.getAllByLabelText('Remove field')).toHaveLength(2);
+        await userEvent.click(screen.getAllByLabelText('Remove field')[0]);
 
-      await userEvent.click(screen.getAllByLabelText('Remove field')[0]);
+        expect(onClickHideField).toHaveBeenCalledWith('key1');
+      });
 
-      expect(onClickHideField).toHaveBeenCalledWith('key1');
-    });
+      test('Renders JSON field values', async () => {
+        await setup(
+          undefined,
+          { labels: { label1: 'value of label1', label2: '{"key1":"value1", "key2": "value2"}' } },
+          { prettifyJSON: false },
+          undefined
+        );
 
-    test('Exposes buttons to reorder displayed fields', async () => {
-      const setDisplayedFields = jest.fn();
-      const onClickHideField = jest.fn();
-      setup(
-        undefined,
-        { labels: { key1: 'label1', key2: 'label2' } },
-        { displayedFields: ['key1', 'key2', 'key3'], setDisplayedFields, onClickHideField }
-      );
+        expect(screen.getByText('label1')).toBeInTheDocument();
+        expect(screen.getByText('label1')).toBeInTheDocument();
+        expect(screen.getByText('value of label1')).toBeInTheDocument();
+        expect(screen.getByText('label2')).toBeInTheDocument();
+        expect(screen.getByText('{"key1":"value1", "key2": "value2"}')).toBeInTheDocument();
+      });
 
-      await userEvent.click(screen.getByText('Organize displayed fields'));
+      test('Renders prettify JSON field values', async () => {
+        await setup(
+          undefined,
+          { labels: { label1: 'value of label1', label2: '{"key1":"value1", "key2": "value2"}' } },
+          { prettifyJSON: true },
+          undefined
+        );
 
-      expect(screen.getAllByLabelText('Remove field')).toHaveLength(3);
-      expect(screen.getAllByLabelText('Move down')).toHaveLength(3);
-      expect(screen.getAllByLabelText('Move up')).toHaveLength(3);
+        expect(screen.getByText('label1')).toBeInTheDocument();
+        expect(screen.getByText('value of label1')).toBeInTheDocument();
+        expect(screen.getByText('label2')).toBeInTheDocument();
+        expect(screen.queryByText('{"key1":"value1", "key2": "value2"}')).not.toBeInTheDocument();
+        expect(screen.getByText(/key1/)).toBeInTheDocument();
+        expect(screen.getByText(/value1/)).toBeInTheDocument();
+        expect(screen.getByText(/key2/)).toBeInTheDocument();
+        expect(screen.getByText(/value2/)).toBeInTheDocument();
+      });
 
-      await userEvent.click(screen.getAllByLabelText('Move down')[0]);
+      test('Exposes buttons to reorder displayed fields', async () => {
+        const setDisplayedFields = jest.fn();
+        const onClickHideField = jest.fn();
+        await setup(
+          undefined,
+          { labels: { key1: 'label1', key2: 'label2' } },
+          { displayedFields: ['key1', 'key2', 'key3'], setDisplayedFields, onClickHideField }
+        );
 
-      expect(setDisplayedFields).toHaveBeenCalledWith(['key2', 'key1', 'key3']);
+        await userEvent.click(screen.getByText('Organize displayed fields'));
 
-      await userEvent.click(screen.getAllByLabelText('Move up')[2]);
+        expect(screen.getAllByLabelText('Remove field')).toHaveLength(3);
+        expect(screen.getAllByLabelText('Move down')).toHaveLength(3);
+        expect(screen.getAllByLabelText('Move up')).toHaveLength(3);
 
-      expect(setDisplayedFields).toHaveBeenCalledWith(['key1', 'key3', 'key2']);
+        await userEvent.click(screen.getAllByLabelText('Move down')[0]);
+
+        expect(setDisplayedFields).toHaveBeenCalledWith(['key2', 'key1', 'key3']);
+
+        await userEvent.click(screen.getAllByLabelText('Move up')[2]);
+
+        expect(setDisplayedFields).toHaveBeenCalledWith(['key1', 'key3', 'key2']);
+      });
     });
   });
 
   describe('Multiple log details', () => {
-    test('Does not render tabs when displaying a single log', () => {
-      setup(undefined, { labels: { key1: 'label1', key2: 'label2' } });
+    test('Does not render tabs when displaying a single log', async () => {
+      await setup(undefined, { labels: { key1: 'label1', key2: 'label2' } });
       expect(screen.queryAllByRole('tab')).toHaveLength(0);
     });
 
@@ -551,7 +737,7 @@ describe('LogLineDetails', () => {
         createLogLine({ uid: '1', logLevel: LogLevel.error, timeEpochMs: 1546297200000, entry: 'First log' }),
         createLogLine({ uid: '2', logLevel: LogLevel.error, timeEpochMs: 1546297200000, entry: 'Second log' }),
       ];
-      setup({ logs }, undefined, { showDetails: logs });
+      await setup({ logs }, undefined, undefined, { showDetails: logs, currentLog: logs[1] }, 'No fields to display.');
 
       expect(screen.queryAllByRole('tab')).toHaveLength(2);
 
@@ -559,70 +745,6 @@ describe('LogLineDetails', () => {
 
       expect(screen.getAllByText('First log')).toHaveLength(1);
       expect(screen.getAllByText('Second log')).toHaveLength(2);
-
-      await userEvent.click(screen.queryAllByRole('tab')[0]);
-
-      expect(screen.getAllByText('First log')).toHaveLength(2);
-      expect(screen.getAllByText('Second log')).toHaveLength(1);
-    });
-
-    test('Changes details focus when logs are added and removed', async () => {
-      const logs = [
-        createLogLine({ uid: '1', logLevel: LogLevel.error, timeEpochMs: 1546297200000, entry: 'First log' }),
-        createLogLine({ uid: '2', logLevel: LogLevel.error, timeEpochMs: 1546297200000, entry: 'Second log' }),
-      ];
-
-      const props: Props = {
-        containerElement: document.createElement('div'),
-        focusLogLine: jest.fn(),
-        logs: [logs[0]],
-        timeRange: getDefaultTimeRange(),
-        timeZone: 'browser',
-        onResize: jest.fn(),
-      };
-
-      const contextData: LogListContextData = {
-        ...defaultValue,
-        showDetails: [logs[0]],
-      };
-
-      const { rerender } = render(
-        <LogListContext.Provider value={contextData}>
-          <LogLineDetails {...props} />
-        </LogListContext.Provider>
-      );
-
-      expect(screen.queryAllByRole('tab')).toHaveLength(0);
-
-      await userEvent.click(screen.getByText('Log line'));
-      // Tab not displayed, only line body
-      expect(screen.getAllByText('First log')).toHaveLength(1);
-
-      contextData.showDetails = logs;
-      props.logs = logs;
-
-      rerender(
-        <LogListContext.Provider value={contextData}>
-          <LogLineDetails {...props} />
-        </LogListContext.Provider>
-      );
-
-      expect(screen.queryAllByRole('tab')).toHaveLength(2);
-      // Tab and log line body
-      expect(screen.getAllByText('Second log')).toHaveLength(2);
-
-      contextData.showDetails = [logs[1]];
-      props.logs = [logs[1]];
-
-      rerender(
-        <LogListContext.Provider value={contextData}>
-          <LogLineDetails {...props} />
-        </LogListContext.Provider>
-      );
-
-      expect(screen.queryAllByRole('tab')).toHaveLength(0);
-      // Tab not displayed, only line body
-      expect(screen.getAllByText('Second log')).toHaveLength(1);
     });
   });
 
@@ -642,7 +764,7 @@ describe('LogLineDetails', () => {
       ],
     });
     const log = createLogLine(
-      { entry, dataFrame, entryFieldIndex: 0, rowIndex: 0 },
+      { entry, dataFrame, entryFieldIndex: 0, rowIndex: 0, datasourceUid: lokiDS.uid },
       {
         escape: false,
         order: LogsSortOrder.Descending,
@@ -653,7 +775,17 @@ describe('LogLineDetails', () => {
           if (field.config && field.config.links) {
             return field.config.links.map((link) => {
               return {
-                href: '/explore?left=%7B%22range%22%3A%7B%22from%22%3A%22now-15m%22%2C%22to%22%3A%22now%22%7D%2C%22datasource%22%3A%22fetpfiwe8asqoe%22%2C%22queries%22%3A%5B%7B%22query%22%3A%22abcd1234%22%2C%22queryType%22%3A%22traceql%22%7D%5D%7D',
+                href: '/explore',
+                interpolatedParams: {
+                  query: {
+                    datasource: {
+                      uid: tempoDS.uid,
+                    },
+                    refId: 'A',
+                    query: 'abcd1234',
+                    queryType: 'traceql',
+                  },
+                },
                 title: 'tempo',
                 target: '_blank',
                 origin: field,
@@ -678,14 +810,14 @@ describe('LogLineDetails', () => {
       })
     );
 
-    setup({ logs: [log] }, undefined, { showDetails: [log] });
+    await setup({ logs: [log] }, undefined, undefined, { showDetails: [log], currentLog: log });
 
     expect(screen.getByText('Links')).toBeInTheDocument();
     expect(screen.getByText('Trace')).toBeInTheDocument();
 
     await userEvent.click(screen.getByText('Trace'));
 
-    expect(screen.getByText('Trace view')).toBeInTheDocument();
+    expect(await screen.findByText('Trace view')).toBeInTheDocument();
   });
 
   test('Shows a message if the trace cannot be retrieved', async () => {
@@ -715,7 +847,17 @@ describe('LogLineDetails', () => {
           if (field.config && field.config.links) {
             return field.config.links.map((link) => {
               return {
-                href: '/explore?left=%7B%22range%22%3A%7B%22from%22%3A%22now-15m%22%2C%22to%22%3A%22now%22%7D%2C%22datasource%22%3A%22fetpfiwe8asqoe%22%2C%22queries%22%3A%5B%7B%22query%22%3A%22abcd1234%22%2C%22queryType%22%3A%22traceql%22%7D%5D%7D',
+                href: '/explore',
+                interpolatedParams: {
+                  query: {
+                    datasource: {
+                      uid: tempoDS.uid,
+                    },
+                    refId: 'A',
+                    query: 'abcd1234',
+                    queryType: 'traceql',
+                  },
+                },
                 title: 'tempo',
                 target: '_blank',
                 origin: field,
@@ -733,7 +875,7 @@ describe('LogLineDetails', () => {
       })
     );
 
-    setup({ logs: [log] }, undefined, { showDetails: [log] });
+    await setup({ logs: [log] }, undefined, undefined, { showDetails: [log], currentLog: log });
 
     expect(screen.getByText('Links')).toBeInTheDocument();
     expect(screen.getByText('Trace')).toBeInTheDocument();
@@ -743,7 +885,7 @@ describe('LogLineDetails', () => {
     expect(screen.getByText('Could not retrieve trace.')).toBeInTheDocument();
   });
 
-  test('shows attribute extension links when they are available', () => {
+  test('shows attribute extension links when they are available', async () => {
     const usePluginLinksMock = jest.fn().mockReturnValue({
       links: [
         {
@@ -758,10 +900,28 @@ describe('LogLineDetails', () => {
     setPluginLinksHook(usePluginLinksMock);
     jest.requireMock('@grafana/runtime').usePluginLinks = usePluginLinksMock;
 
-    setup(undefined, { labels: { label: 'value' } });
+    await setup(undefined, { labels: { label: 'value' } });
 
     expect(screen.getByText('label')).toBeInTheDocument();
     expect(screen.getByText('value')).toBeInTheDocument();
     expect(screen.getByText('Open service overview for label')).toBeInTheDocument();
+  });
+
+  describe('Width regressions', () => {
+    test('should consider Fields Selector width when enabled', async () => {
+      jest.mocked(getFieldSelectorWidth).mockClear();
+
+      await setup({ showFieldSelector: true }, { labels: { key1: 'label1', key2: 'label2' } });
+      expect(screen.getByText('Log line')).toBeInTheDocument();
+      expect(getFieldSelectorWidth).toHaveBeenCalled();
+    });
+
+    test('should not consider Fields Selector width when disabled', async () => {
+      jest.mocked(getFieldSelectorWidth).mockClear();
+
+      await setup({ showFieldSelector: false }, { labels: { key1: 'label1', key2: 'label2' } });
+      expect(screen.getByText('Log line')).toBeInTheDocument();
+      expect(getFieldSelectorWidth).not.toHaveBeenCalled();
+    });
   });
 });

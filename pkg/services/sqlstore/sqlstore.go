@@ -15,7 +15,9 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 
+	"github.com/grafana/grafana/pkg/util/sqlite"
 	"github.com/grafana/grafana/pkg/util/xorm"
 	"github.com/grafana/grafana/pkg/util/xorm/core"
 
@@ -248,6 +250,9 @@ func (ss *SQLStore) initEngine(engine *xorm.Engine) error {
 	}
 
 	ss.log.Info("Connecting to DB", "dbtype", ss.dbCfg.Type)
+	if ss.dbCfg.Type == migrator.SQLite {
+		ss.log.Info("Using SQLite driver", "driver", sqlite.DriverType())
+	}
 	if ss.dbCfg.Type == migrator.SQLite && strings.HasPrefix(ss.dbCfg.ConnectionString, "file:") &&
 		!strings.HasPrefix(ss.dbCfg.ConnectionString, "file::memory:") {
 		exists, err := fs.Exists(ss.dbCfg.Path)
@@ -320,14 +325,18 @@ func (ss *SQLStore) initEngine(engine *xorm.Engine) error {
 	// initialize and register metrics wrapper around the *sql.DB
 	db := engine.DB().DB
 
-	// register the go_sql_stats_connections_* metrics
-	if err := prometheus.Register(sqlstats.NewStatsCollector("grafana", db)); err != nil {
-		ss.log.Warn("Failed to register sqlstore stats collector", "error", err)
+	if err := prometheus.Register(collectors.NewDBStatsCollector(db, "grafana")); err != nil {
+		ss.log.Warn("Failed to register 'Prometheus collector' sqlstore stats collector", "error", err)
 	}
 
-	// TODO: deprecate/remove these metrics
-	if err := prometheus.Register(newSQLStoreMetrics(db)); err != nil {
-		ss.log.Warn("Failed to register sqlstore metrics", "error", err)
+	// TODO(@macabu/2026-03-04): Remove on G14 as these metrics are the same as the ones above.
+	if ss.cfg.DatabaseRegisterDeprecatedMetrics {
+		if err := prometheus.Register(sqlstats.NewStatsCollector("grafana", db)); err != nil {
+			ss.log.Warn("Failed to register 'sqlstats' sqlstore stats collector", "error", err)
+		}
+		if err := prometheus.Register(newSQLStoreMetrics(db)); err != nil {
+			ss.log.Warn("Failed to register 'Grafana legacy' sqlstore metrics", "error", err)
+		}
 	}
 
 	ss.engine = engine
@@ -577,10 +586,16 @@ func TestMain(m *testing.M) {
 	// nolint:staticcheck
 	testSQLStore.cfg.IsFeatureToggleEnabled = features.IsEnabledGlobally
 
-	if err := testSQLStore.dialect.TruncateDBTables(testSQLStore.GetEngine()); err != nil {
-		return nil, err
+	skipTruncate := false
+	if skip, present := os.LookupEnv("SKIP_DB_TRUNCATE"); present {
+		skipTruncate = strings.ToLower(skip) == "true"
 	}
-	testSQLStore.engine.ResetSequenceGenerator()
+	if !skipTruncate {
+		if err := testSQLStore.dialect.TruncateDBTables(testSQLStore.GetEngine()); err != nil {
+			return nil, err
+		}
+		testSQLStore.engine.ResetSequenceGenerator()
+	}
 
 	if err := testSQLStore.Reset(); err != nil {
 		return nil, err

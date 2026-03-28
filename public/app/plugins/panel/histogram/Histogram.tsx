@@ -112,7 +112,7 @@ const prepConfig = (frame: DataFrame, theme: GrafanaTheme2) => {
     direction: ScaleDirection.Right,
     range: useLogScale
       ? (u, wantedMin, wantedMax) => {
-          return uPlot.rangeLog(wantedMin, wantedMax * bucketFactor, 2, true);
+          return uPlot.rangeLog(wantedMin, (wantedMax ?? 1) * bucketFactor, 2, true);
         }
       : (u, wantedMin, wantedMax) => {
           // these settings will prevent zooming, probably okay?
@@ -203,6 +203,12 @@ const prepConfig = (frame: DataFrame, theme: GrafanaTheme2) => {
       x: true,
       y: false,
       setScale: true,
+    },
+    dataIdx: (u, _, closestIdx, xValue) =>
+      isOrdinalX ? Math.floor(xValue) : xValue < u.data[0][closestIdx] ? closestIdx - 1 : closestIdx,
+    focus: {
+      prox: 1e6,
+      bias: 1,
     },
   });
 

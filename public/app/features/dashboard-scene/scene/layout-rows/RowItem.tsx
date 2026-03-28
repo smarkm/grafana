@@ -1,31 +1,42 @@
 import React from 'react';
 
+import { store } from '@grafana/data';
 import { t } from '@grafana/i18n';
+import { logWarning } from '@grafana/runtime';
+import { getFeatureFlagClient } from '@grafana/runtime/internal';
 import {
+  NewSceneObjectAddedEvent,
   sceneGraph,
   SceneObject,
   SceneObjectBase,
   SceneObjectState,
   VariableDependencyConfig,
-  VizPanel,
+  SceneGridItemLike,
+  SceneGridLayout,
 } from '@grafana/scenes';
-import { RowsLayoutRowKind } from '@grafana/schema/dist/esm/schema/dashboard/v2';
-import appEvents from 'app/core/app_events';
+import { RowsLayoutRowKind } from '@grafana/schema/apis/dashboard.grafana.app/v2';
+import { appEvents } from 'app/core/app_events';
 import { LS_ROW_COPY_KEY } from 'app/core/constants';
-import store from 'app/core/store';
 import kbn from 'app/core/utils/kbn';
-import { OptionsPaneCategoryDescriptor } from 'app/features/dashboard/components/PanelEditor/OptionsPaneCategoryDescriptor';
 import { ShowConfirmModalEvent } from 'app/types/events';
 
-import { ConditionalRendering } from '../../conditional-rendering/ConditionalRendering';
+import { ConditionalRenderingGroup } from '../../conditional-rendering/group/ConditionalRenderingGroup';
+import { dashboardEditActions } from '../../edit-pane/shared';
 import { serializeRow } from '../../serialization/layoutSerializers/RowsLayoutSerializer';
 import { getElements } from '../../serialization/layoutSerializers/utils';
-import { getDashboardSceneFor } from '../../utils/utils';
+import { removeRepeatLocalVariableFromSet } from '../../utils/clone';
+import { PanelIdGenerator } from '../../utils/dashboardSceneGraph';
+import { trackDropItemCrossLayout } from '../../utils/tracking';
+import { getDashboardSceneFor, interpolateSectionTitle } from '../../utils/utils';
+import { AutoGridItem } from '../layout-auto-grid/AutoGridItem';
+import { AutoGridLayout } from '../layout-auto-grid/AutoGridLayout';
 import { AutoGridLayoutManager } from '../layout-auto-grid/AutoGridLayoutManager';
+import { DashboardGridItem } from '../layout-default/DashboardGridItem';
 import { clearClipboard } from '../layouts-shared/paste';
 import { scrollCanvasElementIntoView } from '../layouts-shared/scrollCanvasElementIntoView';
 import { BulkActionElement } from '../types/BulkActionElement';
 import { DashboardDropTarget } from '../types/DashboardDropTarget';
+import { isDashboardLayoutGrid } from '../types/DashboardLayoutGrid';
 import { DashboardLayoutManager } from '../types/DashboardLayoutManager';
 import { EditableDashboardElement, EditableDashboardElementInfo } from '../types/EditableDashboardElement';
 import { LayoutParent } from '../types/LayoutParent';
@@ -42,7 +53,7 @@ export interface RowItemState extends SceneObjectState {
   hideHeader?: boolean;
   fillScreen?: boolean;
   isDropTarget?: boolean;
-  conditionalRendering?: ConditionalRendering;
+  conditionalRendering?: ConditionalRenderingGroup;
   repeatByVariable?: string;
   repeatedRows?: RowItem[];
   /** Marks object as a repeated object and a key pointer to source object */
@@ -68,7 +79,7 @@ export class RowItem
       ...state,
       title: state?.title ?? t('dashboard.rows-layout.row.new', 'New row'),
       layout: state?.layout ?? AutoGridLayoutManager.createEmpty(),
-      conditionalRendering: state?.conditionalRendering ?? ConditionalRendering.createEmpty(),
+      conditionalRendering: state?.conditionalRendering ?? ConditionalRenderingGroup.createEmpty(),
     });
 
     this.addActivationHandler(() => this._activationHandler());
@@ -85,15 +96,25 @@ export class RowItem
   }
 
   public getEditableElementInfo(): EditableDashboardElementInfo {
+    const isHidden = !this.state.conditionalRendering?.state.result;
     return {
       typeName: t('dashboard.edit-pane.elements.row', 'Row'),
-      instanceName: sceneGraph.interpolate(this, this.state.title, undefined, 'text'),
+      instanceName: interpolateSectionTitle(this, this.state.title),
       icon: 'list-ul',
+      isHidden,
     };
   }
 
-  public getOutlineChildren(): SceneObject[] {
-    return this.state.layout.getOutlineChildren();
+  public getOutlineChildren(isEditing?: boolean): SceneObject[] {
+    const layoutChildren = this.state.layout.getOutlineChildren();
+    if (
+      isEditing &&
+      getFeatureFlagClient().getBooleanValue('dashboardSectionVariables', false) &&
+      this.state.$variables
+    ) {
+      return [this.state.$variables, ...layoutChildren];
+    }
+    return layoutChildren;
   }
 
   public getLayout(): DashboardLayoutManager {
@@ -101,16 +122,27 @@ export class RowItem
   }
 
   public getSlug(): string {
-    return kbn.slugifyForUrl(sceneGraph.interpolate(this, this.state.title ?? 'Row'));
+    return kbn.slugifyForUrl(interpolateSectionTitle(this, this.state.title ?? 'Row'));
   }
 
   public switchLayout(layout: DashboardLayoutManager) {
-    this.setState({ layout });
+    const currentLayout = this.state.layout;
+
+    dashboardEditActions.edit({
+      description: t('dashboard.edit-actions.switch-layout-row', 'Switch layout'),
+      source: this,
+      perform: () => {
+        this.setState({ layout });
+        this.publishEvent(new NewSceneObjectAddedEvent(this), true);
+      },
+      undo: () => {
+        this.setState({ layout: currentLayout });
+        this.publishEvent(new NewSceneObjectAddedEvent(this), true);
+      },
+    });
   }
 
-  public useEditPaneOptions(isNewElement: boolean): OptionsPaneCategoryDescriptor[] {
-    return useEditOptions(this, isNewElement);
-  }
+  public useEditPaneOptions = useEditOptions.bind(this);
 
   public onDelete() {
     this.getParentLayout().removeRow(this);
@@ -150,8 +182,10 @@ export class RowItem
     this.getParentLayout().duplicateRow(this);
   }
 
-  public duplicate(): RowItem {
-    return this.clone({ key: undefined, layout: this.getLayout().duplicate() });
+  // panelIdGenerator is a shared sequential counter created by the parent layout
+  // we forward id to ensure sibling tabs never produce duplicate panel IDs
+  public duplicate(panelIdGenerator?: PanelIdGenerator): RowItem {
+    return this.clone({ key: undefined, layout: this.getLayout().duplicate(panelIdGenerator) });
   }
 
   public serialize(): RowsLayoutRowKind {
@@ -171,14 +205,51 @@ export class RowItem
     }
   }
 
-  public draggedPanelOutside(panel: VizPanel) {
-    this.getLayout().removePanel?.(panel);
+  public draggedGridItemOutside?(gridItem: SceneGridItemLike): void {
+    // Remove from source layout
+    if (gridItem instanceof DashboardGridItem || gridItem instanceof AutoGridItem) {
+      const layout = gridItem.parent;
+      if (gridItem instanceof DashboardGridItem && layout instanceof SceneGridLayout) {
+        // Toggle isDraggable off to force react-grid-layout to exit drag mode
+        // This clears react-grid-layout's internal drag state
+        // This is a workaround until we upgrade to react-grid-layout 2.x.x
+        const wasDraggable = layout.state.isDraggable;
+        if (wasDraggable) {
+          layout.setState({ isDraggable: false });
+        }
+
+        const newChildren = layout.state.children.filter((child) => child !== gridItem);
+        layout.setState({ children: newChildren });
+
+        // Restore isDraggable after a microtask to ensure react-grid-layout processes the change
+        if (wasDraggable) {
+          queueMicrotask(() => {
+            layout.setState({ isDraggable: true });
+          });
+        }
+      } else if (gridItem instanceof AutoGridItem && layout instanceof AutoGridLayout) {
+        const newChildren = layout.state.children.filter((child) => child !== gridItem);
+        layout.setState({ children: newChildren });
+      } else {
+        const warningMessage = 'Grid item has unexpected parent type';
+        console.warn(warningMessage);
+        logWarning(warningMessage);
+      }
+    }
     this.setIsDropTarget(false);
   }
 
-  public draggedPanelInside(panel: VizPanel) {
-    panel.clearParent();
-    this.getLayout().addPanel(panel);
+  public draggedGridItemInside(gridItem: SceneGridItemLike): void {
+    trackDropItemCrossLayout(gridItem);
+    const layout = this.getLayout();
+
+    if (isDashboardLayoutGrid(layout)) {
+      layout.addGridItem(gridItem);
+    } else {
+      const warningMessage = 'Layout manager does not support addGridItem';
+      console.warn(warningMessage);
+      logWarning(warningMessage);
+    }
     this.setIsDropTarget(false);
   }
 
@@ -202,7 +273,11 @@ export class RowItem
     if (repeat) {
       this.setState({ repeatByVariable: repeat });
     } else {
-      this.setState({ repeatedRows: undefined, $variables: undefined, repeatByVariable: undefined });
+      this.setState({
+        repeatedRows: undefined,
+        $variables: removeRepeatLocalVariableFromSet(this.state.$variables, this.state.repeatByVariable),
+        repeatByVariable: undefined,
+      });
     }
   }
 

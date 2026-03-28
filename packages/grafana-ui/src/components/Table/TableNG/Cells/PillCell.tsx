@@ -1,4 +1,5 @@
 import { css } from '@emotion/css';
+import memoize from 'micro-memoize';
 import { useMemo } from 'react';
 
 import {
@@ -8,10 +9,11 @@ import {
   getColorByStringHash,
   FALLBACK_COLOR,
   fieldColorModeRegistry,
+  formattedValueToString,
 } from '@grafana/data';
 import { FieldColorModeId } from '@grafana/schema';
 
-import { getActiveCellSelector } from '../styles';
+import { getActiveCellSelector, isTableCellStylesKeyEqual } from '../styles';
 import { PillCellProps, TableCellStyles, TableCellValue } from '../types';
 
 export function PillCell({ rowIdx, field, theme, getTextColorForBackground }: PillCellProps) {
@@ -20,10 +22,11 @@ export function PillCell({ rowIdx, field, theme, getTextColorForBackground }: Pi
     const pillValues = inferPills(value);
     return pillValues.length > 0
       ? pillValues.map((pill, index) => {
-          const bgColor = getPillColor(pill, field, theme);
+          const renderedValue = formattedValueToString(field.display!(pill));
+          const bgColor = getPillColor(renderedValue, field, theme);
           const textColor = getTextColorForBackground(bgColor);
           return {
-            value: String(pill),
+            value: renderedValue,
             key: `${pill}-${index}`,
             bgColor,
             color: textColor,
@@ -65,6 +68,10 @@ export function inferPills(rawValue: TableCellValue): unknown[] {
     return [];
   }
 
+  if (Array.isArray(rawValue)) {
+    return rawValue.filter((v) => v != null).map((v) => String(v).trim());
+  }
+
   const value = String(rawValue);
 
   if (value[0] === '[') {
@@ -102,24 +109,27 @@ function getPillColor(value: unknown, field: Field, theme: GrafanaTheme2): strin
   return getColorByStringHash(colors, String(value));
 }
 
-export const getStyles: TableCellStyles = (theme, { textWrap, shouldOverflow, maxHeight }) =>
-  css({
-    display: 'inline-flex',
-    gap: theme.spacing(0.5),
-    flexWrap: textWrap ? 'wrap' : 'nowrap',
+export const getStyles: TableCellStyles = memoize(
+  (theme, { textWrap, shouldOverflow, maxHeight }) =>
+    css({
+      display: 'inline-flex',
+      gap: theme.spacing(0.5),
+      flexWrap: textWrap ? 'wrap' : 'nowrap',
 
-    ...(shouldOverflow && {
-      [getActiveCellSelector(Boolean(maxHeight))]: {
-        flexWrap: 'wrap',
+      ...(shouldOverflow && {
+        [getActiveCellSelector(Boolean(maxHeight))]: {
+          flexWrap: 'wrap',
+        },
+      }),
+
+      '> span': {
+        display: 'flex',
+        padding: theme.spacing(0.25, 0.75),
+        borderRadius: theme.shape.radius.default,
+        fontSize: theme.typography.bodySmall.fontSize,
+        lineHeight: theme.typography.bodySmall.lineHeight,
+        whiteSpace: 'nowrap',
       },
     }),
-
-    '> span': {
-      display: 'flex',
-      padding: theme.spacing(0.25, 0.75),
-      borderRadius: theme.shape.radius.default,
-      fontSize: theme.typography.bodySmall.fontSize,
-      lineHeight: theme.typography.bodySmall.lineHeight,
-      whiteSpace: 'nowrap',
-    },
-  });
+  { isMatchingKey: isTableCellStylesKeyEqual }
+);

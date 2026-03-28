@@ -42,6 +42,7 @@ __debug_bin*
 /devenv/docker/blocks/auth/saml-enterprise
 /devenv/docker/blocks/auth/signer
 /devenv/docker/blocks/mt-db
+/devenv/mt-tilt
 
 /tmp
 tools/phantomjs/phantomjs
@@ -70,6 +71,7 @@ public/css/*.min.css
 .vs/
 .cursor/
 .devcontainer/
+.claude/
 
 .eslintcache
 .stylelintcache
@@ -129,6 +131,8 @@ profile.cov
 /public/app/extensions
 !/public/app/extensions/.keep
 
+# Enterprise operators
+/pkg/operators/enterprise_*
 
 debug.test
 /examples/*/dist
@@ -161,6 +165,7 @@ pkg/services/quota/quotaimpl/storage/storage.json
 /packages/grafana-ui/.yarn/.cache
 /packages/grafana-ui/.storybook/static
 /packages/grafana-ui/unstable
+/packages/grafana-flamegraph/.storybook/static
 /packages/**/dist
 /packages/**/compiled
 /packages/**/.rpt2_cache
@@ -171,6 +176,7 @@ pkg/services/quota/quotaimpl/storage/storage.json
 
 # Ignore frontend build manifest
 manifest.json
+manifest-react19.json
 
 # Ignore go local build dependencies
 /scripts/go/bin/**
@@ -191,6 +197,8 @@ compilation-stats.json
 /e2e/build_results.zip
 /e2e/extensions
 !/e2e/extensions/.keep
+/e2e-playwright/extensions
+!/e2e-playwright/extensions/.keep
 /e2e/extensions-suite
 /test-results/
 /playwright-report/
@@ -203,6 +211,7 @@ compilation-stats.json
 # a11y tests
 /pa11y-ci-results.json
 /pa11y-ci-report
+/axe-ci-report.json
 
 # report dumping the whole system env
 /report.*.json
@@ -220,7 +229,6 @@ public/api-spec.json
 
 deployment_tools_config.json
 
-.betterer.cache
 .nx
 
 # Temporary file for backporting PRs
@@ -244,3 +252,26 @@ public/mockServiceWorker.js
 
 /e2e-playwright/test-plugins/*/dist
 /apps/provisioning/cmd/job-controller/bin/
+
+# Ignore unified storage kv store files
+/grafana-kv-data
+
+# Ignore debug output from test library
+/pkg/storage/secret/metadata/testdata/rapid/TestStateMachine/
+
+/codeowners-manifest/
+
+# Ignore grafana/hippocampus local cache folder
+.hippo
+
+coverage-summary.json
+
+# older path, but keeping to avoid surprises for devs who may have the earlier gitignored data
+devenv/blocks/auth/signer/keys/ec_private_key.pem
+
+devenv/docker/blocks/auth/signer/keys/ec_private_key.pem
+
+# Spec-kit files shouldn't be committed without a major design process
+.specs
+.playwright-mcp/
+overrides.yaml

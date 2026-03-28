@@ -1,8 +1,7 @@
 import { GrafanaPlugin, NavModel, NavModelItem, PanelPluginMeta, PluginType } from '@grafana/data';
 import { createMonitoringLogger } from '@grafana/runtime';
 
-import { importPanelPluginFromMeta } from './importPanelPlugin';
-import { importAppPlugin, importDataSourcePlugin } from './pluginLoader';
+import { pluginImporter } from './importer/pluginImporter';
 import { getPluginSettings } from './pluginSettings';
 
 export async function loadPlugin(pluginId: string): Promise<GrafanaPlugin> {
@@ -10,13 +9,13 @@ export async function loadPlugin(pluginId: string): Promise<GrafanaPlugin> {
   let result: GrafanaPlugin | undefined;
 
   if (info.type === PluginType.app) {
-    result = await importAppPlugin(info);
+    result = await pluginImporter.importApp(info);
   }
   if (info.type === PluginType.datasource) {
-    result = await importDataSourcePlugin(info);
+    result = await pluginImporter.importDataSource(info);
   }
   if (info.type === PluginType.panel) {
-    const panelPlugin = await importPanelPluginFromMeta(info as PanelPluginMeta);
+    const panelPlugin = await pluginImporter.importPanel(info as PanelPluginMeta);
     result = panelPlugin as unknown as GrafanaPlugin;
   }
   if (info.type === PluginType.renderer) {
@@ -79,7 +78,7 @@ export function buildPluginSectionNav(currentUrl: string, pluginNavSection?: Nav
   }
 
   // Find and set active page
-  copiedPluginNavSection.children = (copiedPluginNavSection?.children ?? []).map(findAndSetActivePage);
+  copiedPluginNavSection.children = (copiedPluginNavSection?.children ?? []).map((item) => findAndSetActivePage(item));
 
   return { main: copiedPluginNavSection, node: activePage ?? copiedPluginNavSection };
 }

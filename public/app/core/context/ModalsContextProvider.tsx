@@ -7,7 +7,7 @@ import { ConfirmModal, ConfirmModalProps, ModalsContext } from '@grafana/ui';
 import { ModalsContextState } from '@grafana/ui/internal';
 import { ShowConfirmModalEvent, ShowModalReactEvent } from 'app/types/events';
 
-import appEvents from '../app_events';
+import { appEvents } from '../app_events';
 
 export interface Props {
   children: React.ReactNode;
@@ -87,7 +87,6 @@ function showConfirmModal({ payload }: ShowConfirmModalEvent, setState: (state: 
     text,
     text2htmlBind,
     yesText = 'Yes',
-    icon,
     title = 'Confirm',
     yesButtonVariant,
   } = payload;
@@ -98,7 +97,6 @@ function showConfirmModal({ payload }: ShowConfirmModalEvent, setState: (state: 
     confirmText: yesText,
     confirmButtonVariant: yesButtonVariant,
     confirmationText: confirmText,
-    icon,
     title,
     body: text,
     description: text2 && text2htmlBind ? textUtil.sanitize(text2) : text2,

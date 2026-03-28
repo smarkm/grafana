@@ -1,42 +1,31 @@
 package alerting
 
 import (
+	"encoding/json"
 	"net/http"
+	"path"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/grafana/alerting/receivers/opsgenie"
+	opsgeniev1 "github.com/grafana/alerting/receivers/opsgenie/v1"
+	"github.com/prometheus/alertmanager/config"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 
+	"github.com/grafana/grafana/pkg/components/simplejson"
+	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	apimodels "github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
 	"github.com/grafana/grafana/pkg/tests/testinfra"
+	"github.com/grafana/grafana/pkg/util/testutil"
 )
 
-const testAlertmanagerConfigYAML = `
-route:
-  group_by: ['alertname']
-  group_wait: 10s
-  group_interval: 10s
-  repeat_interval: 1h
-  receiver: webhook
-
-receivers:
-- name: webhook
-  webhook_configs:
-  - url: 'http://127.0.0.1:5001/'
-
-inhibit_rules:
-- source_match:
-    severity: 'critical'
-  target_match:
-    severity: 'warning'
-  equal: ['alertname', 'dev', 'instance']
-`
-
 func TestIntegrationConvertPrometheusAlertmanagerEndpoints(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
+	testutil.SkipIntegrationTestInShortMode(t)
 
-		// Setup Grafana with alerting import feature flag enabled
-	}
+	// Setup Grafana with alerting import feature flag enabled
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, gpath := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -45,13 +34,22 @@ func TestIntegrationConvertPrometheusAlertmanagerEndpoints(t *testing.T) {
 		DisableAnonymous:      true,
 		AppModeProduction:     true,
 		EnableFeatureToggles: []string{
-			"alertingImportAlertmanagerAPI",
+			featuremgmt.FlagAlertingImportAlertmanagerAPI,
 		},
 	})
 
 	grafanaListedAddr, _ := testinfra.StartGrafanaEnv(t, dir, gpath)
 
 	apiClient := newAlertingApiClient(grafanaListedAddr, "admin", "admin")
+
+	configYaml, err := testData.ReadFile(path.Join("test-data", "mimir-alertmanager-post.yaml"))
+	require.NoError(t, err)
+	template, err := testData.ReadFile(path.Join("test-data", "mimir-alertmanager.tmpl"))
+	require.NoError(t, err)
+	expected, err := testData.ReadFile(path.Join("test-data", "mimir-alertmanager-get.yaml"))
+	require.NoError(t, err)
+	var expectedConfig map[string]any
+	require.NoError(t, yaml.Unmarshal(expected, &expectedConfig))
 
 	cleanup := func(identifier string) {
 		deleteHeaders := map[string]string{
@@ -60,6 +58,9 @@ func TestIntegrationConvertPrometheusAlertmanagerEndpoints(t *testing.T) {
 		_, status, _ := apiClient.RawConvertPrometheusDeleteAlertmanagerConfig(t, deleteHeaders)
 		require.Equal(t, http.StatusAccepted, status)
 	}
+
+	apiClient.EnsureMuteTiming(t, apimodels.MuteTimeInterval{MuteTimeInterval: config.MuteTimeInterval{Name: "maintenance_window"}})
+	apiClient.EnsureReceiver(t, apimodels.EmbeddedContactPoint{Name: "opsgenie", Type: string(opsgenie.Type), Settings: simplejson.MustJson([]byte(opsgeniev1.FullValidConfigForTesting))})
 
 	t.Run("create and get alertmanager configuration", func(t *testing.T) {
 		identifier := "test-create-get-config"
@@ -73,26 +74,33 @@ func TestIntegrationConvertPrometheusAlertmanagerEndpoints(t *testing.T) {
 		}
 
 		amConfig := apimodels.AlertmanagerUserConfig{
-			AlertmanagerConfig: testAlertmanagerConfigYAML,
+			AlertmanagerConfig: string(configYaml),
 			TemplateFiles: map[string]string{
-				"test.tmpl": `{{ define "test.template" }}Test template{{ end }}`,
+				"mimir-alertmanager.tmpl": string(template),
 			},
 		}
 
 		response := apiClient.ConvertPrometheusPostAlertmanagerConfig(t, amConfig, headers)
 		require.Equal(t, "success", response.Status)
 
+		t.Run("should return renamed resources", func(t *testing.T) {
+			assert.Contains(t, response.RenameResources.Receivers, "opsgenie")
+			assert.Contains(t, response.RenameResources.TimeIntervals, "maintenance_window")
+		})
+
 		getHeaders := map[string]string{
 			"X-Grafana-Alerting-Config-Identifier": identifier,
 		}
 		retrievedConfig := apiClient.ConvertPrometheusGetAlertmanagerConfig(t, getHeaders)
-		require.NotEmpty(t, retrievedConfig.AlertmanagerConfig)
-		require.Contains(t, retrievedConfig.TemplateFiles, "test.tmpl")
-		require.Equal(t, `{{ define "test.template" }}Test template{{ end }}`, retrievedConfig.TemplateFiles["test.tmpl"])
+		var actualConfig map[string]any
+		require.NoError(t, yaml.Unmarshal([]byte(retrievedConfig.AlertmanagerConfig), &actualConfig))
 
-		require.Contains(t, retrievedConfig.AlertmanagerConfig, "name: webhook")
-		require.Contains(t, retrievedConfig.AlertmanagerConfig, "receiver: webhook")
-		require.Contains(t, retrievedConfig.AlertmanagerConfig, "webhook_configs:")
+		diff := cmp.Diff(expectedConfig, actualConfig)
+		if diff != "" {
+			t.Fatalf("unexpected config (-want +got):\n%s", diff)
+		}
+		require.Contains(t, retrievedConfig.TemplateFiles, "mimir-alertmanager.tmpl")
+		require.Equal(t, string(template), retrievedConfig.TemplateFiles["mimir-alertmanager.tmpl"])
 	})
 
 	t.Run("delete alertmanager configuration", func(t *testing.T) {
@@ -107,9 +115,9 @@ func TestIntegrationConvertPrometheusAlertmanagerEndpoints(t *testing.T) {
 		}
 
 		amConfig := apimodels.AlertmanagerUserConfig{
-			AlertmanagerConfig: testAlertmanagerConfigYAML,
+			AlertmanagerConfig: string(configYaml),
 			TemplateFiles: map[string]string{
-				"test.tmpl": `{{ define "test.template" }}Test template{{ end }}`,
+				"mimir-alertmanager.tmpl": string(template),
 			},
 		}
 
@@ -139,28 +147,28 @@ func TestIntegrationConvertPrometheusAlertmanagerEndpoints(t *testing.T) {
 			}
 
 			amConfig := apimodels.AlertmanagerUserConfig{
-				AlertmanagerConfig: testAlertmanagerConfigYAML,
+				AlertmanagerConfig: string(configYaml),
 			}
 
 			_, status, _ := apiClient.RawConvertPrometheusPostAlertmanagerConfig(t, amConfig, headers)
 			requireStatusCode(t, http.StatusAccepted, status, "")
 
 			getHeaders := map[string]string{
-				"X-Grafana-Alerting-Config-Identifier": "default",
+				"X-Grafana-Alerting-Config-Identifier": "imported",
 			}
 			responseConfig, status, _ := apiClient.RawConvertPrometheusGetAlertmanagerConfig(t, getHeaders)
 			requireStatusCode(t, http.StatusOK, status, "")
 			require.NotEmpty(t, responseConfig.AlertmanagerConfig)
 		})
 
-		t.Run("POST without merge matchers header should fail", func(t *testing.T) {
+		t.Run("POST with invalid identifier should fail", func(t *testing.T) {
 			headers := map[string]string{
 				"Content-Type":                         "application/yaml",
-				"X-Grafana-Alerting-Config-Identifier": "test-config",
+				"X-Grafana-Alerting-Config-Identifier": "-test-",
 			}
 
 			amConfig := apimodels.AlertmanagerUserConfig{
-				AlertmanagerConfig: testAlertmanagerConfigYAML,
+				AlertmanagerConfig: string(configYaml),
 			}
 
 			_, status, _ := apiClient.RawConvertPrometheusPostAlertmanagerConfig(t, amConfig, headers)
@@ -175,7 +183,7 @@ func TestIntegrationConvertPrometheusAlertmanagerEndpoints(t *testing.T) {
 			}
 
 			amConfig := apimodels.AlertmanagerUserConfig{
-				AlertmanagerConfig: testAlertmanagerConfigYAML,
+				AlertmanagerConfig: string(configYaml),
 			}
 
 			_, status, _ := apiClient.RawConvertPrometheusPostAlertmanagerConfig(t, amConfig, headers)
@@ -204,7 +212,7 @@ func TestIntegrationConvertPrometheusAlertmanagerEndpoints(t *testing.T) {
 			}
 
 			amConfig := apimodels.AlertmanagerUserConfig{
-				AlertmanagerConfig: testAlertmanagerConfigYAML,
+				AlertmanagerConfig: string(configYaml),
 			}
 
 			_, status, _ := apiClient.RawConvertPrometheusPostAlertmanagerConfig(t, amConfig, createHeaders)
@@ -232,7 +240,7 @@ func TestIntegrationConvertPrometheusAlertmanagerEndpoints(t *testing.T) {
 		}
 
 		amConfig1 := apimodels.AlertmanagerUserConfig{
-			AlertmanagerConfig: testAlertmanagerConfigYAML,
+			AlertmanagerConfig: string(configYaml),
 			TemplateFiles: map[string]string{
 				"config1.tmpl": `{{ define "config1.template" }}Config 1{{ end }}`,
 			},
@@ -283,7 +291,6 @@ receivers:
 	t.Run("multiple extra configurations conflict", func(t *testing.T) {
 		firstIdentifier := "first-config"
 		secondIdentifier := "second-config"
-		defer cleanup(firstIdentifier)
 
 		// Create first configuration
 		firstHeaders := map[string]string{
@@ -293,7 +300,7 @@ receivers:
 		}
 
 		amConfig1 := apimodels.AlertmanagerUserConfig{
-			AlertmanagerConfig: testAlertmanagerConfigYAML,
+			AlertmanagerConfig: string(configYaml),
 			TemplateFiles: map[string]string{
 				"first.tmpl": `{{ define "first.template" }}First Config{{ end }}`,
 			},
@@ -333,13 +340,66 @@ receivers:
 		requireStatusCode(t, http.StatusConflict, status, "")
 		require.Contains(t, body, "multiple extra configurations are not supported")
 		require.Contains(t, body, firstIdentifier)
+
+		t.Run("should override existing configuration if specified", func(t *testing.T) {
+			defer cleanup(secondIdentifier)
+			secondHeaders["X-Grafana-Alerting-Config-Force-Replace"] = "true"
+
+			response2 := apiClient.ConvertPrometheusPostAlertmanagerConfig(t, amConfig2, secondHeaders)
+			require.Equal(t, "success", response2.Status)
+
+			getHeaders := map[string]string{
+				"X-Grafana-Alerting-Config-Identifier": firstIdentifier,
+			}
+
+			_, status, _ := apiClient.RawConvertPrometheusGetAlertmanagerConfig(t, getHeaders)
+			requireStatusCode(t, http.StatusNotFound, status, "")
+
+			getHeaders = map[string]string{
+				"X-Grafana-Alerting-Config-Identifier": secondIdentifier,
+			}
+
+			_, status, _ = apiClient.RawConvertPrometheusGetAlertmanagerConfig(t, getHeaders)
+			requireStatusCode(t, http.StatusOK, status, "")
+		})
+	})
+
+	t.Run("dry-run should not create configuration", func(t *testing.T) {
+		identifier := "config"
+		// Create first configuration
+		firstHeaders := map[string]string{
+			"Content-Type":                         "application/yaml",
+			"X-Grafana-Alerting-Config-Identifier": identifier,
+			"X-Grafana-Alerting-Dry-Run":           "true",
+		}
+
+		amConfig := apimodels.AlertmanagerUserConfig{
+			AlertmanagerConfig: string(configYaml),
+			TemplateFiles: map[string]string{
+				"first.tmpl": `{{ define "first.template" }}First Config{{ end }}`,
+			},
+		}
+
+		_, status, body := apiClient.RawConvertPrometheusPostAlertmanagerConfig(t, amConfig, firstHeaders)
+		require.Equal(t, http.StatusOK, status)
+
+		response := apimodels.ConvertAlertmanagerResponse{}
+		err := json.Unmarshal([]byte(body), &response)
+		require.NoError(t, err)
+
+		t.Run("should return renamed resources", func(t *testing.T) {
+			assert.Contains(t, response.RenameResources.Receivers, "opsgenie")
+			assert.Contains(t, response.RenameResources.TimeIntervals, "maintenance_window")
+		})
+
+		_, status, _ = apiClient.RawConvertPrometheusGetAlertmanagerConfig(t, firstHeaders)
+		requireStatusCode(t, http.StatusNotFound, status, "")
 	})
 }
 
 func TestIntegrationConvertPrometheusAlertmanagerEndpoints_FeatureFlagDisabled(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, gpath := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -357,10 +417,12 @@ func TestIntegrationConvertPrometheusAlertmanagerEndpoints_FeatureFlagDisabled(t
 		"X-Grafana-Alerting-Config-Identifier": "test-config",
 		"X-Grafana-Alerting-Merge-Matchers":    "environment=test",
 	}
+	configYaml, err := testData.ReadFile(path.Join("test-data", "mimir-alertmanager-post.yaml"))
+	require.NoError(t, err)
 
 	t.Run("POST should return not implemented when feature flag disabled", func(t *testing.T) {
 		amConfig := apimodels.AlertmanagerUserConfig{
-			AlertmanagerConfig: testAlertmanagerConfigYAML,
+			AlertmanagerConfig: string(configYaml),
 		}
 
 		_, status, _ := apiClient.RawConvertPrometheusPostAlertmanagerConfig(t, amConfig, headers)

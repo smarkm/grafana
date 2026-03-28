@@ -2,12 +2,15 @@ package notifier
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	alertingModels "github.com/grafana/alerting/models"
 	"github.com/grafana/alerting/notify/nfstatus"
+	alertingTemplates "github.com/grafana/alerting/templates"
 	"github.com/prometheus/client_golang/prometheus"
 
 	alertingCluster "github.com/grafana/alerting/cluster"
@@ -40,17 +43,17 @@ var (
 	ErrAlertmanagerNotFound = errutil.NotFound("alerting.notifications.alertmanager.notFound")
 	ErrAlertmanagerConflict = errutil.Conflict("alerting.notifications.alertmanager.conflict")
 
-	ErrSilenceNotFound    = errutil.NotFound("alerting.notifications.silences.notFound")
-	ErrSilencesBadRequest = errutil.BadRequest("alerting.notifications.silences.badRequest")
-	ErrSilenceInternal    = errutil.Internal("alerting.notifications.silences.internal")
+	ErrSilenceNotFound      = errutil.NotFound("alerting.notifications.silences.notFound")
+	ErrSilencesBadRequest   = errutil.BadRequest("alerting.notifications.silences.badRequest")
+	ErrSilenceInternal      = errutil.Internal("alerting.notifications.silences.internal")
+	ErrSilenceLimitExceeded = errutil.TooManyRequests("alerting.notifications.silences.limitExceeded", errutil.WithPublicMessage("Maximum number of silences has been reached. Delete some silences before creating new ones."))
+	ErrSilenceSizeExceeded  = errutil.BadRequest("alerting.notifications.silences.sizeExceeded", errutil.WithPublicMessage("Silence size exceeds the maximum allowed size."))
 )
 
 //go:generate mockery --name Alertmanager --structname AlertmanagerMock --with-expecter --output alertmanager_mock --outpkg alertmanager_mock
 type Alertmanager interface {
 	// Configuration
-	ApplyConfig(context.Context, *models.AlertConfiguration) error
-	SaveAndApplyConfig(ctx context.Context, config *apimodels.PostableUserConfig) error
-	SaveAndApplyDefaultConfig(ctx context.Context) error
+	ApplyConfig(context.Context, alertingNotify.NotificationsConfiguration) (bool, error)
 	GetStatus(context.Context) (apimodels.GettableStatus, error)
 
 	// Silences
@@ -69,8 +72,9 @@ type Alertmanager interface {
 	PutAlerts(context.Context, apimodels.PostableAlerts) error
 
 	// Receivers
-	GetReceivers(ctx context.Context) ([]apimodels.Receiver, error)
+	GetReceivers(ctx context.Context) ([]alertingModels.ReceiverStatus, error)
 	TestReceivers(ctx context.Context, c apimodels.TestReceiversConfigBodyParams) (*alertingNotify.TestReceiversResult, int, error)
+	TestIntegration(ctx context.Context, receiverName string, integrationConfig models.Integration, alert alertingModels.TestReceiversConfigAlertParams) (alertingModels.IntegrationStatus, error)
 	TestTemplate(ctx context.Context, c apimodels.TestTemplatesConfigBodyParams) (*TestTemplatesResults, error)
 
 	// Lifecycle
@@ -82,6 +86,7 @@ type Alertmanager interface {
 type ExternalState struct {
 	Silences []byte
 	Nflog    []byte
+	FlushLog []byte
 }
 
 // StateMerger describes a type that is able to merge external state (nflog, silences) with its own.
@@ -99,10 +104,12 @@ type MultiOrgAlertmanager struct {
 	settings       *setting.Cfg
 	featureManager featuremgmt.FeatureToggles
 	logger         log.Logger
+	limits         alertingNotify.DynamicLimits
 
 	// clusterPeer represents the clustering peers of Alertmanagers between Grafana instances.
-	peer         alertingNotify.ClusterPeer
-	settleCancel context.CancelFunc
+	peer                   alertingNotify.ClusterPeer
+	alertsBroadcastChannel alertingCluster.ClusterChannel
+	settleCancel           context.CancelFunc
 
 	configStore AlertingStore
 	orgStore    store.OrgStore
@@ -163,6 +170,18 @@ func NewMultiOrgAlertmanager(
 
 	if err := moa.setupClustering(cfg); err != nil {
 		return nil, err
+	}
+
+	moa.initAlertBroadcast()
+
+	moa.limits = alertingNotify.DynamicLimits{
+		Dispatcher: nilLimits{},
+		Templates: alertingTemplates.Limits{
+			MaxTemplateOutputSize: moa.settings.UnifiedAlerting.AlertmanagerMaxTemplateOutputSize,
+		},
+	}
+	if err := moa.limits.Templates.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid template limits: %w", err)
 	}
 
 	// Set up the default per tenant Alertmanager factory.
@@ -247,6 +266,49 @@ func (moa *MultiOrgAlertmanager) setupClustering(cfg *setting.Cfg) error {
 		return nil
 	}
 	return nil
+}
+
+// initAlertBroadcast initializes the alert broadcast channel for HA mode.
+// When enabled, alerts evaluated on the primary instance are broadcast to all peers.
+func (moa *MultiOrgAlertmanager) initAlertBroadcast() {
+	if moa.peer == nil {
+		return
+	}
+	if _, ok := moa.peer.(*NilPeer); ok {
+		return
+	}
+	queueSize := moa.settings.UnifiedAlerting.HASingleEvaluationAlertBroadcastQueueSize
+	if queueSize <= 0 {
+		queueSize = setting.AlertBroadcastDefaultQueueSize
+	}
+	state := newAlertBroadcastState(moa.logger.New("component", "alert-broadcast"), moa)
+	moa.alertsBroadcastChannel = moa.peer.AddState(alertBroadcastKey, state, moa.metrics.Registerer,
+		alertingCluster.WithReliableDelivery(true),
+		alertingCluster.WithQueueSize(queueSize),
+	)
+}
+
+// BroadcastAlerts sends alerts to all peers via the cluster channel.
+// This is used in HA single-node evaluation mode to propagate alerts from the
+// primary evaluator to all other instances.
+func (moa *MultiOrgAlertmanager) BroadcastAlerts(orgID int64, alerts apimodels.PostableAlerts) {
+	if moa.alertsBroadcastChannel == nil {
+		return
+	}
+	if len(alerts.PostableAlerts) == 0 {
+		return
+	}
+	payload := AlertBroadcastPayload{
+		OrgID:  orgID,
+		Alerts: alerts,
+	}
+	buf, err := json.Marshal(payload)
+	if err != nil {
+		moa.logger.Warn("Failed to encode broadcast alerts payload", "error", err)
+		return
+	}
+	moa.alertsBroadcastChannel.Broadcast(buf)
+	moa.logger.Debug("Broadcast alerts to peers", "orgID", orgID, "alerts", len(alerts.PostableAlerts))
 }
 
 func (moa *MultiOrgAlertmanager) Run(ctx context.Context) error {
@@ -334,7 +396,7 @@ func (moa *MultiOrgAlertmanager) SyncAlertmanagersForOrgs(ctx context.Context, o
 				// This means that the configuration is gone but the organization, as well as the Alertmanager, exists.
 				moa.logger.Warn("Alertmanager exists for org but the configuration is gone. Applying the default configuration", "org", orgID)
 			}
-			err := alertmanager.SaveAndApplyDefaultConfig(ctx)
+			err := moa.saveAndApplyDefaultConfig(ctx, orgID, alertmanager)
 			if err != nil {
 				moa.logger.Error("Failed to apply the default Alertmanager configuration", "org", orgID)
 				continue
@@ -343,9 +405,9 @@ func (moa *MultiOrgAlertmanager) SyncAlertmanagersForOrgs(ctx context.Context, o
 			continue
 		}
 
-		err := alertmanager.ApplyConfig(ctx, dbConfig)
+		_, err = moa.applyConfig(ctx, orgID, alertmanager, dbConfig)
 		if err != nil {
-			moa.logger.Error("Failed to apply Alertmanager config for org", "org", orgID, "id", dbConfig.ID, "error", err)
+			moa.logger.Error("Failed to apply Alertmanager config for org", "org", orgID, "id", dbConfig.ID, "hash", dbConfig.ConfigurationHash, "error", err)
 			continue
 		}
 		moa.alertmanagers[orgID] = alertmanager
@@ -378,7 +440,7 @@ func (moa *MultiOrgAlertmanager) SyncAlertmanagersForOrgs(ctx context.Context, o
 func (moa *MultiOrgAlertmanager) cleanupOrphanLocalOrgState(ctx context.Context,
 	activeOrganizations map[int64]struct{},
 ) {
-	storedFiles := []string{NotificationLogFilename, SilencesFilename}
+	storedFiles := []string{NotificationLogFilename, SilencesFilename, FlushLogFilename}
 	for _, fileName := range storedFiles {
 		keys, err := moa.kvStore.Keys(ctx, kvstore.AllOrganizations, KVNamespace, fileName)
 		if err != nil {
@@ -418,6 +480,12 @@ func (moa *MultiOrgAlertmanager) StopAndWait() {
 		moa.settleCancel()
 		r.Shutdown()
 	}
+}
+
+// Peer returns the cluster peer for this Alertmanager.
+// Returns nil if clustering is not configured.
+func (moa *MultiOrgAlertmanager) Peer() alertingNotify.ClusterPeer {
+	return moa.peer
 }
 
 // AlertmanagerFor returns the Alertmanager instance for the organization provided.
@@ -593,10 +661,11 @@ type NilPeer struct{}
 
 func (p *NilPeer) Position() int                   { return 0 }
 func (p *NilPeer) WaitReady(context.Context) error { return nil }
-func (p *NilPeer) AddState(string, alertingCluster.State, prometheus.Registerer) alertingCluster.ClusterChannel {
+func (p *NilPeer) AddState(string, alertingCluster.State, prometheus.Registerer, ...alertingCluster.ChannelOption) alertingCluster.ClusterChannel {
 	return &NilChannel{}
 }
 
 type NilChannel struct{}
 
-func (c *NilChannel) Broadcast([]byte) {}
+func (c *NilChannel) Broadcast([]byte)             {}
+func (c *NilChannel) ReliableDelivery([]byte) bool { return true }

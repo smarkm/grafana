@@ -1,15 +1,17 @@
-import { getDataSourceRef, IntervalVariableModel } from '@grafana/data';
+import { getDataSourceRef, IntervalVariableModel, ScopedVars } from '@grafana/data';
 import { t } from '@grafana/i18n';
 import { config, getDataSourceSrv } from '@grafana/runtime';
 import {
   CancelActivationHandler,
   CustomVariable,
+  LocalValueVariable,
   MultiValueVariable,
   SceneDataTransformer,
   sceneGraph,
   SceneObject,
   SceneObjectState,
   SceneQueryRunner,
+  SceneVariableSet,
   VizPanel,
   VizPanelMenu,
 } from '@grafana/scenes';
@@ -17,7 +19,6 @@ import { Dashboard, Panel, RowPanel } from '@grafana/schema';
 import { createLogger } from '@grafana/ui';
 import { initialIntervalVariableModelState } from 'app/features/variables/interval/reducer';
 
-import { CustomTimeRangeCompare } from '../scene/CustomTimeRangeCompare';
 import { DashboardDatasourceBehaviour } from '../scene/DashboardDatasourceBehaviour';
 import { DashboardLayoutOrchestrator } from '../scene/DashboardLayoutOrchestrator';
 import { DashboardScene, DashboardSceneState } from '../scene/DashboardScene';
@@ -25,8 +26,13 @@ import { LibraryPanelBehavior } from '../scene/LibraryPanelBehavior';
 import { VizPanelLinks, VizPanelLinksMenu } from '../scene/PanelLinks';
 import { panelMenuBehavior } from '../scene/PanelMenuBehavior';
 import { UNCONFIGURED_PANEL_PLUGIN_ID } from '../scene/UnconfiguredPanel';
+import { VizPanelHeaderActions } from '../scene/VizPanelHeaderActions';
+import { VizPanelSubHeader } from '../scene/VizPanelSubHeader';
+import { AutoGridLayoutManager } from '../scene/layout-auto-grid/AutoGridLayoutManager';
 import { DashboardGridItem } from '../scene/layout-default/DashboardGridItem';
+import { DefaultGridLayoutManager } from '../scene/layout-default/DefaultGridLayoutManager';
 import { setDashboardPanelContext } from '../scene/setDashboardPanelContext';
+import { DashboardDropTarget } from '../scene/types/DashboardDropTarget';
 import { DashboardLayoutManager, isDashboardLayoutManager } from '../scene/types/DashboardLayoutManager';
 
 export const NEW_PANEL_HEIGHT = 8;
@@ -96,6 +102,7 @@ function findVizPanelInternal(scene: SceneObject, key: string | undefined): VizP
 
   return null;
 }
+
 export function findEditPanel(scene: SceneObject, key: string | undefined): VizPanel | null {
   if (!key) {
     return null;
@@ -150,7 +157,11 @@ export function getMultiVariableValues(variable: MultiValueVariable | CustomVari
 }
 
 // used to transform old interval model to new interval model from scenes
-export function getIntervalsFromQueryString(query: string): string[] {
+export function getIntervalsFromQueryString(query: string | undefined): string[] {
+  if (!query) {
+    return initialIntervalVariableModelState.query?.split(',') ?? [];
+  }
+
   // separate intervals by quotes either single or double
   const matchIntervals = query.match(/(["'])(.*?)\1|\w+/g);
 
@@ -185,7 +196,19 @@ export function getIntervalsQueryFromNewIntervalModel(intervals: string[]): stri
 }
 
 export function getCurrentValueForOldIntervalModel(variable: IntervalVariableModel, intervals: string[]): string {
-  const selectedInterval = Array.isArray(variable.current.value) ? variable.current.value[0] : variable.current.value;
+  // Handle missing current object or value
+  const currentValue = variable.current?.value;
+  const selectedInterval = Array.isArray(currentValue) ? currentValue[0] : currentValue;
+
+  // If no intervals are available, return empty string (will use default from IntervalVariable)
+  if (intervals.length === 0) {
+    return '';
+  }
+
+  // If no selected interval, return the first valid interval
+  if (!selectedInterval) {
+    return intervals[0];
+  }
 
   // If the interval is the old auto format, return the new auto interval from scenes.
   if (selectedInterval.startsWith('$__auto_interval_') || selectedInterval === '$__auto') {
@@ -241,9 +264,18 @@ export function getClosestVizPanel(sceneObject: SceneObject): VizPanel | null {
   return null;
 }
 
+export function getDefaultPluginId(): string {
+  return config.featureToggles.dashboardNewLayouts || config.featureToggles.newVizSuggestions
+    ? UNCONFIGURED_PANEL_PLUGIN_ID
+    : 'timeseries';
+}
+
 export function getDefaultVizPanel(): VizPanel {
-  const defaultPluginId = config.featureToggles.dashboardNewLayouts ? UNCONFIGURED_PANEL_PLUGIN_ID : 'timeseries';
+  const defaultPluginId = getDefaultPluginId();
+
   const newPanelTitle = t('dashboard.new-panel-title', 'New panel');
+
+  const datasourceSettings = getDataSourceSrv().getInstanceSettings(null);
 
   return new VizPanel({
     title: newPanelTitle,
@@ -252,21 +284,26 @@ export function getDefaultVizPanel(): VizPanel {
     titleItems: [new VizPanelLinks({ menu: new VizPanelLinksMenu({}) })],
     hoverHeaderOffset: 0,
     $behaviors: [],
+    subHeader: new VizPanelSubHeader({
+      hideNonApplicableDrilldowns: !config.featureToggles.perPanelNonApplicableDrilldowns,
+    }),
     extendPanelContext: setDashboardPanelContext,
     menu: new VizPanelMenu({
       $behaviors: [panelMenuBehavior],
     }),
-    headerActions: config.featureToggles.timeComparison
-      ? [new CustomTimeRangeCompare({ key: 'time-compare', compareWith: undefined, compareOptions: [] })]
-      : undefined,
-    $data: new SceneDataTransformer({
-      $data: new SceneQueryRunner({
-        queries: [{ refId: 'A' }],
-        datasource: getDataSourceRef(getDataSourceSrv().getInstanceSettings(null)!),
-        $behaviors: [new DashboardDatasourceBehaviour({})],
-      }),
-      transformations: [],
+    headerActions: new VizPanelHeaderActions({
+      hideGroupByAction: !config.featureToggles.panelGroupBy,
     }),
+    $data: datasourceSettings
+      ? new SceneDataTransformer({
+          $data: new SceneQueryRunner({
+            queries: [{ refId: 'A' }],
+            datasource: getDataSourceRef(datasourceSettings),
+            $behaviors: [new DashboardDatasourceBehaviour({})],
+          }),
+          transformations: [],
+        })
+      : undefined,
   });
 }
 
@@ -388,9 +425,66 @@ export function useInterpolatedTitle<T extends SceneObjectState & { title?: stri
   return sceneGraph.interpolate(scene, title, undefined, 'text');
 }
 
+type RepeatableSectionState = SceneObjectState & {
+  repeatByVariable?: string;
+  repeatSourceKey?: string;
+};
+
+export function interpolateSectionTitle<T extends RepeatableSectionState>(
+  scene: SceneObject<T>,
+  value: string | undefined | null
+): string {
+  if (value === '' || value == null) {
+    return '';
+  }
+
+  // Section titles/slugs should resolve in local scene scope so they can
+  // use ancestor section variables (including repeat-local variables).
+  if (scene.state.repeatByVariable || scene.state.repeatSourceKey) {
+    return sceneGraph.interpolate(scene, value, getRepeatLocalScopedVars(scene), 'text');
+  }
+  return sceneGraph.interpolate(scene, value, undefined, 'text');
+}
+
+function getRepeatLocalScopedVars<T extends RepeatableSectionState>(scene: SceneObject<T>): ScopedVars | undefined {
+  const variableSet = scene.state.$variables;
+  if (!(variableSet instanceof SceneVariableSet)) {
+    return undefined;
+  }
+
+  const repeatLocalVariable = variableSet.state.variables.find((variable) => variable instanceof LocalValueVariable);
+  if (!(repeatLocalVariable instanceof LocalValueVariable)) {
+    return undefined;
+  }
+
+  return {
+    [repeatLocalVariable.state.name]: {
+      value: repeatLocalVariable.getValue(),
+      text: repeatLocalVariable.state.text,
+    },
+  };
+}
+
 export function getLayoutOrchestratorFor(scene: SceneObject): DashboardLayoutOrchestrator | undefined {
   return getDashboardSceneFor(scene).state.layoutOrchestrator;
 }
+
+export const getLayoutForObject = (
+  object: DashboardDropTarget | SceneObject<SceneObjectState> | DashboardScene
+): AutoGridLayoutManager | DefaultGridLayoutManager | null => {
+  const gridManagerForObject = sceneGraph.findObject(
+    object,
+    (currentSceneObject) =>
+      currentSceneObject instanceof AutoGridLayoutManager || currentSceneObject instanceof DefaultGridLayoutManager
+  );
+  if (
+    gridManagerForObject instanceof AutoGridLayoutManager ||
+    gridManagerForObject instanceof DefaultGridLayoutManager
+  ) {
+    return gridManagerForObject;
+  }
+  return null;
+};
 
 // @returns true if the panel is a valid library panel reference
 // a valid library panel reference is a panel with this
@@ -431,3 +525,19 @@ export function hasLibraryPanelsInV1Dashboard(dashboard: Dashboard | undefined):
 }
 
 export const dashboardLog = createLogger('Dashboard');
+
+/**
+ * Checks if there are save changes but not counting time range, refresh rate and default variable value change
+ */
+export function hasActualSaveChanges(dashboard: DashboardScene) {
+  const changes = dashboard.getDashboardChanges();
+  return !!changes.diffCount;
+}
+
+export function isDashboardSceneEnabled(): boolean {
+  return !!(config.featureToggles.dashboardScene || config.featureToggles.dashboardNewLayouts);
+}
+
+export function isPublicDashboardsSceneEnabled(): boolean {
+  return !!(config.featureToggles.publicDashboardsScene || config.featureToggles.dashboardNewLayouts);
+}

@@ -1,5 +1,6 @@
 import { css } from '@emotion/css';
 
+import { AlertLabels } from '@grafana/alerting/unstable';
 import { GrafanaTheme2, dateTime, dateTimeFormat } from '@grafana/data';
 import { Trans, t } from '@grafana/i18n';
 import { Tooltip, useStyles2 } from '@grafana/ui';
@@ -10,7 +11,6 @@ import { usePendingPeriod } from '../../hooks/rules/usePendingPeriod';
 import { useCleanAnnotations } from '../../utils/annotations';
 import { prometheusRuleType, rulerRuleType } from '../../utils/rules';
 import { isNullDate } from '../../utils/time';
-import { AlertLabels } from '../AlertLabels';
 import { DetailsField } from '../DetailsField';
 
 import { RuleDetailsAnnotations } from './RuleDetailsAnnotations';
@@ -142,7 +142,7 @@ const EvaluationBehaviorSummary = ({ rule }: EvaluationBehaviorSummaryProps) => 
             content={`${lastEvaluationDuration}s`}
             theme="info"
           >
-            <span>{Time({ timeInMs: lastEvaluationDuration, humanize: true })}</span>
+            <span>{Time({ timeInMs: lastEvaluationDuration * 1000, humanize: true })}</span>
           </Tooltip>
         </DetailsField>
       )}

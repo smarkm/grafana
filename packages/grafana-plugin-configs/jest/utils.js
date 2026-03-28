@@ -2,12 +2,12 @@ export const nodeModulesToTransform = (moduleNames) => `.*\/node_modules\/(?!.*(
 
 // Array of known nested grafana package dependencies that only bundle an ESM version
 export const grafanaESModules = [
-  '@glideapps/glide-data-grid',
   '@wojtekmaj/date-utils',
   'ol',
   'd3',
   'd3-color',
   'd3-interpolate',
+  'd3-scale-chromatic',
   'delaunator',
   'get-user-locale',
   'internmap',

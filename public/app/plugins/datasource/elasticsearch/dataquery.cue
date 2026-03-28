@@ -29,14 +29,25 @@ composableKinds: DataQuery: {
 
 				// Alias pattern
 				alias?: string
-				// Lucene query
+				// Query string (Lucene or DSL depending on queryType)
 				query?: string
+				// Query type - determines how the query field is interpreted
+				queryType?: #QueryType
 				// Name of time field
 				timeField?: string
+				// Editor type
+				editorType?: string
 				// List of bucket aggregations
 				bucketAggs?: [...#BucketAggregation]
 				// List of metric aggregations
 				metrics?: [...#MetricAggregation]
+				// Metadata for variable queries
+				meta?: {
+					textField?:  string
+					valueField?: string
+				}
+
+				#QueryType: "lucene" | "dsl" | "esql" @cuetsy(kind="type")
 
 				#BucketAggregation: #DateHistogram | #Histogram | #Terms | #Filters | #GeoHashGrid | #Nested @cuetsy(kind="type")
 				#MetricAggregation: #Count | #PipelineMetricAggregation | #MetricAggregationWithSettings     @cuetsy(kind="type")

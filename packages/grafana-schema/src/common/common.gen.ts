@@ -502,6 +502,33 @@ export enum VizOrientation {
   Vertical = 'vertical',
 }
 
+export interface VizAnnotations extends AnnotationDisplayOptions {
+  /**
+   * Sets whether clustering is enabled. Set as a number to provide for threshold customization in the future without breaking API changes. Any value > 0 will enable clustering.
+   */
+  clustering?: number;
+  /**
+   * Breaks out each annotation frame into multiple lanes on the x-axis
+   */
+  multiLane?: boolean;
+}
+
+export interface AnnotationDisplayOptions {
+  lines?: {
+    width?: number;
+  };
+  regions?: {
+    opacity?: number;
+  };
+}
+
+/**
+ * TODO docs
+ */
+export interface OptionsWithAnnotations {
+  annotations?: VizAnnotations;
+}
+
 /**
  * TODO docs
  */
@@ -648,6 +675,7 @@ export interface VizLegendOptions {
   calcs: Array<string>;
   displayMode: LegendDisplayMode;
   isVisible?: boolean;
+  limit?: number;
   placement: LegendPlacement;
   showLegend: boolean;
   sortBy?: string;
@@ -758,22 +786,6 @@ export interface TableSortByFieldState {
    */
   displayName: string;
 }
-
-/**
- * Footer options
- */
-export interface TableFooterOptions {
-  countRows?: boolean;
-  enablePagination?: boolean;
-  fields?: Array<string>;
-  reducer: Array<string>; // actually 1 value
-  show: boolean;
-}
-
-export const defaultTableFooterOptions: Partial<TableFooterOptions> = {
-  fields: [],
-  reducer: [],
-};
 
 /**
  * Auto mode table cell options
@@ -992,6 +1004,69 @@ export enum TableCellTooltipPlacement {
   Top = 'top',
 }
 
+export interface TableFooterOptions {
+  /**
+   * footer reducers to apply to this field
+   */
+  reducers?: Array<string>;
+}
+
+export const defaultTableFooterOptions: Partial<TableFooterOptions> = {
+  reducers: [],
+};
+
+/**
+ * Note that public/app/plugins/panel/table/panelcfg.cue contains a deprecated copy of these options
+ */
+export interface TableOptions {
+  /**
+   * Controls the height of the rows
+   */
+  cellHeight?: TableCellHeight;
+  /**
+   * If true, disables all keyboard events in the table. this is used when previewing a table (i.e. suggestions)
+   */
+  disableKeyboardEvents?: boolean;
+  /**
+   * Enable pagination on the table
+   */
+  enablePagination?: boolean;
+  /**
+   * Represents the index of the selected frame
+   */
+  frameIndex: number;
+  /**
+   * Defines the number of columns to freeze on the left side of the table
+   */
+  frozenColumns?: {
+    left?: number;
+  };
+  /**
+   * limits the maximum height of a row, if text wrapping or dynamic height is enabled
+   */
+  maxRowHeight?: number;
+  /**
+   * Controls whether the panel should show the header
+   */
+  showHeader: boolean;
+  /**
+   * Controls whether the header should show icons for the column types
+   */
+  showTypeIcons?: boolean;
+  /**
+   * Used to control row sorting
+   */
+  sortBy?: Array<TableSortByFieldState>;
+}
+
+export const defaultTableOptions: Partial<TableOptions> = {
+  cellHeight: TableCellHeight.Sm,
+  frameIndex: 0,
+  showHeader: true,
+  showTypeIcons: false,
+  sortBy: [],
+};
+
 /**
  * Field options for each field within a table (e.g 10, "The String", 64.20, etc.)
  * Generally defines alignment, filtering capabilties, display options, etc.
@@ -1005,11 +1080,19 @@ export interface TableFieldOptions extends HideableFieldConfig {
   displayMode?: TableCellDisplayMode;
   filterable?: boolean;
   /**
+   * options for the footer for this field
+   */
+  footer?: TableFooterOptions;
+  /**
    * Hides any header for a column, useful for columns that show some static content or buttons.
    */
   hideHeader?: boolean;
   inspect: boolean;
   minWidth?: number;
+  /**
+   * The name of the field which contains styling overrides for this cell
+   */
+  styleField?: string;
   /**
    * Selecting or hovering this field will show a tooltip containing the content within the target field
    */

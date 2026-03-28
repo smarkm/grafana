@@ -1,8 +1,8 @@
 import { TimeZone } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
 import { WeekStart } from '@grafana/ui';
-import { notifyApp } from 'app/core/actions';
 import { createSuccessNotification } from 'app/core/copy/appNotification';
+import { notifyApp } from 'app/core/reducers/appNotification';
 import { getDashboardAPI } from 'app/features/dashboard/api/dashboard_api';
 import { dashboardWatcher } from 'app/features/live/dashboard/dashboardWatcher';
 import { removeAllPanels } from 'app/features/panel/state/reducers';
@@ -26,7 +26,8 @@ export function importDashboard(data: any, dashboardTitle: string): ThunkResult<
 
 export function removeDashboard(uid: string): ThunkResult<void> {
   return async (dispatch) => {
-    await getDashboardAPI().deleteDashboard(uid, false);
+    const api = await getDashboardAPI();
+    await api.deleteDashboard(uid, false);
     dispatch(loadPluginDashboards());
   };
 }

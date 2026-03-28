@@ -8,10 +8,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 
 	"github.com/grafana/grafana/pkg/bus"
 	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/infra/tracing"
+	"github.com/grafana/grafana/pkg/services/apiserver/endpoints/request"
 	"github.com/grafana/grafana/pkg/services/correlations"
 	"github.com/grafana/grafana/pkg/services/correlations/correlationstest"
 	"github.com/grafana/grafana/pkg/services/dashboards"
@@ -26,7 +28,10 @@ import (
 	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/services/user/userimpl"
 	"github.com/grafana/grafana/pkg/setting"
+	"github.com/grafana/grafana/pkg/storage/unified/resource"
+	"github.com/grafana/grafana/pkg/storage/unified/resourcepb"
 	"github.com/grafana/grafana/pkg/tests/testsuite"
+	"github.com/grafana/grafana/pkg/util/testutil"
 )
 
 func TestMain(m *testing.M) {
@@ -34,9 +39,8 @@ func TestMain(m *testing.M) {
 }
 
 func TestIntegrationStatsDataAccess(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	db, cfg := db.InitTestDBWithCfg(t)
 	orgSvc := populateDB(t, db, cfg)
 	dashSvc := &dashboards.FakeDashboardService{}
@@ -49,13 +53,28 @@ func TestIntegrationStatsDataAccess(t *testing.T) {
 
 	folderService := &foldertest.FakeService{}
 	folderService.ExpectedFolders = []*folder.Folder{{ID: 1}, {ID: 2}, {ID: 3}}
+	unifiedStorage := new(resource.MockResourceClient)
+	unifiedStorage.On("GetStats", mock.Anything, mock.Anything).Return(
+		func(_ context.Context, req *resourcepb.ResourceStatsRequest, _ ...grpc.CallOption) *resourcepb.ResourceStatsResponse {
+			s := make([]*resourcepb.ResourceStatsResponse_Stats, len(req.Kinds))
+			for i := range req.Kinds {
+				s[i] = &resourcepb.ResourceStatsResponse_Stats{Count: 5}
+			}
+			return &resourcepb.ResourceStatsResponse{Stats: s}
+		}, nil)
+
+	// Set playlists to Mode5 so they are read from unified storage (the mock)
+	cfg.EnableMode5(setting.PlaylistResource)
 
 	statsService := &sqlStatsService{
-		db:        db,
-		dashSvc:   dashSvc,
-		orgSvc:    orgSvc,
-		folderSvc: folderService,
-		features:  featuremgmt.WithFeatures(),
+		cfg:            cfg,
+		db:             db,
+		dashSvc:        dashSvc,
+		orgSvc:         orgSvc,
+		folderSvc:      folderService,
+		features:       featuremgmt.WithFeatures(),
+		namespacer:     request.GetNamespaceMapper(cfg),
+		unifiedStorage: unifiedStorage,
 	}
 
 	t.Run("Get system stats should not results in error", func(t *testing.T) {
@@ -72,7 +91,9 @@ func TestIntegrationStatsDataAccess(t *testing.T) {
 		assert.Equal(t, int64(2), result.Correlations)
 		assert.Equal(t, int64(3), result.Orgs)
 		assert.Equal(t, int64(3), result.Dashboards)
-		assert.Equal(t, int64(9), result.Folders) // will return 3 folders for each org
+		assert.Equal(t, int64(9), result.Folders)       // will return 3 folders for each org
+		assert.Equal(t, int64(15), result.Playlists)    // 5 per org from mock × 3 orgs
+		assert.Equal(t, int64(15), result.Repositories) // 5 per org from mock × 3 orgs
 		assert.NotNil(t, result.DatabaseCreatedTime)
 		assert.Equal(t, db.GetDialect().DriverName(), result.DatabaseDriver)
 	})
@@ -108,6 +129,20 @@ func TestIntegrationStatsDataAccess(t *testing.T) {
 		assert.Equal(t, int64(1), stats.Tags)
 		assert.Equal(t, int64(3), stats.Dashboards)
 		assert.Equal(t, int64(3), stats.Orgs)
+		assert.Equal(t, int64(15), stats.Playlists) // 5 per org from mock × 3 orgs
+	})
+
+	t.Run("Get resource counts", func(t *testing.T) {
+		orgs := []*org.OrgDTO{
+			{ID: 1}, {ID: 2}, {ID: 3},
+		}
+		counts, err := statsService.getResourceCounts(context.Background(), orgs, []string{
+			"playlist.grafana.app/playlists",
+			"provisioning.grafana.app/repositories",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, int64(15), counts["playlist.grafana.app/playlists"])        // 5 per org from mock × 3 orgs
+		assert.Equal(t, int64(15), counts["provisioning.grafana.app/repositories"]) // 5 per org from mock × 3 orgs
 	})
 }
 
@@ -117,7 +152,7 @@ func populateDB(t *testing.T, db db.DB, cfg *setting.Cfg) org.Service {
 	orgService, _ := orgimpl.ProvideService(db, cfg, quotatest.New(false, nil))
 	userSvc, _ := userimpl.ProvideService(
 		db, orgService, cfg, nil, nil, tracing.InitializeTracerForTest(),
-		&quotatest.FakeQuotaService{}, supportbundlestest.NewFakeBundleService(),
+		&quotatest.FakeQuotaService{}, supportbundlestest.NewFakeBundleService(), nil,
 	)
 
 	bus := bus.ProvideBus(tracing.InitializeTracerForTest())

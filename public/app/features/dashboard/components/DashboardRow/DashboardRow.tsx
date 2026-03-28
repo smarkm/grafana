@@ -8,7 +8,8 @@ import { selectors } from '@grafana/e2e-selectors';
 import { Trans, t } from '@grafana/i18n';
 import { getTemplateSrv, RefreshEvent } from '@grafana/runtime';
 import { Icon, TextLink, Themeable2, withTheme2 } from '@grafana/ui';
-import appEvents from 'app/core/app_events';
+import { appEvents } from 'app/core/app_events';
+import { DashboardInteractions } from 'app/features/dashboard-scene/utils/interactions';
 import { SHARED_DASHBOARD_QUERY } from 'app/plugins/datasource/dashboard/constants';
 import grabDarkSvg from 'img/grab_dark.svg';
 import grabLightSvg from 'img/grab_light.svg';
@@ -87,7 +88,6 @@ export class UnthemedDashboardRow extends Component<DashboardRowProps> {
         title: t('dashboard.unthemed-dashboard-row.title.delete-row', 'Delete row'),
         text: 'Are you sure you want to remove this row and all its panels?',
         altActionText: 'Delete row only',
-        icon: 'trash-alt',
         onConfirm: () => {
           this.props.dashboard.removeRow(this.props.panel, true);
         },
@@ -141,7 +141,10 @@ export class UnthemedDashboardRow extends Component<DashboardRowProps> {
             <button
               type="button"
               className="pointer"
-              onClick={this.onDelete}
+              onClick={() => {
+                DashboardInteractions.trackDeleteDashboardElement('row');
+                this.onDelete();
+              }}
               aria-label={t('dashboard.unthemed-dashboard-row.aria-label-delete-row', 'Delete row')}
             >
               <Icon name="trash-alt" />

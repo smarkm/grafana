@@ -1,14 +1,17 @@
 import { find } from 'lodash';
 
 import { DataSourceInstanceSettings, DataSourceRef, PanelPluginMeta, TypedVariableModel } from '@grafana/data';
+import { setPanelPluginMetas } from '@grafana/runtime/internal';
 import { Dashboard, DashboardCursorSync, ThresholdsMode } from '@grafana/schema';
 import {
   DatasourceVariableKind,
   LibraryPanelKind,
   PanelKind,
   QueryVariableKind,
-} from '@grafana/schema/dist/esm/schema/dashboard/v2';
-import { handyTestingSchema } from '@grafana/schema/dist/esm/schema/dashboard/v2_examples';
+  GroupByVariableKind,
+  AdhocVariableKind,
+} from '@grafana/schema/apis/dashboard.grafana.app/v2';
+import { handyTestingSchema } from '@grafana/schema/apis/dashboard.grafana.app/v2/examples';
 import config from 'app/core/config';
 import { DashboardModel } from 'app/features/dashboard/state/DashboardModel';
 import { createAdHocVariableAdapter } from 'app/features/variables/adhoc/adapter';
@@ -20,15 +23,16 @@ import { createConstantVariableAdapter } from '../../../variables/constant/adapt
 import { createDataSourceVariableAdapter } from '../../../variables/datasource/adapter';
 import { createQueryVariableAdapter } from '../../../variables/query/adapter';
 
-import { makeExportableV1, makeExportableV2, LibraryElementExport } from './exporters';
+import { makeExportableV1, makeExportableV2, LibraryElementExport, ExportLabel } from './exporters';
 
-jest.mock('app/core/store', () => {
-  return {
+jest.mock('@grafana/data', () => ({
+  ...jest.requireActual('@grafana/data'),
+  store: {
     getBool: jest.fn(),
     getObject: jest.fn((_a, b) => b),
     get: jest.fn(),
-  };
-});
+  },
+}));
 
 jest.mock('@grafana/runtime', () => ({
   ...jest.requireActual('@grafana/runtime'),
@@ -43,10 +47,12 @@ jest.mock('@grafana/runtime', () => ({
   },
   config: {
     buildInfo: {},
-    panels: {},
     apps: {},
     featureToggles: {
       newVariables: false,
+    },
+    unifiedAlerting: {
+      minInterval: '10s',
     },
   },
 }));
@@ -144,7 +150,7 @@ describe('dashboard exporter v1', () => {
     expect(exported.templating.list[0].datasource.uid).toBe('${DS_GFDB}');
   });
 
-  it('do not expose datasource name and id in a in a template variable of type datasource', async () => {
+  it('templateize datasource uid in a datasource variable that is used in a panel', async () => {
     const dashboard: Dashboard = {
       title: 'My dashboard',
       revision: 1,
@@ -159,6 +165,10 @@ describe('dashboard exporter v1', () => {
           type: 'timeseries',
           title: 'My panel title',
           gridPos: { x: 0, y: 0, w: 1, h: 1 },
+          datasource: {
+            type: 'prometheus',
+            uid: '${ds_var}',
+          },
         },
       ],
       templating: {
@@ -172,7 +182,7 @@ describe('dashboard exporter v1', () => {
             hide: 0,
             includeAll: false,
             multi: false,
-            name: 'query1',
+            name: 'ds_var',
             options: [],
             query: 'prometheus',
             refresh: 1,
@@ -188,7 +198,11 @@ describe('dashboard exporter v1', () => {
     });
     const exported = (await makeExportableV1(dashboardModel)) as DashboardJson;
     const value = exported?.templating?.list ? exported?.templating?.list[0].current : '';
-    expect(value).toEqual({});
+    expect(value).toEqual({
+      selected: true,
+      text: '',
+      value: '${DS_GFDB}',
+    });
   });
 
   it('replaces datasource ref in library panel', async () => {
@@ -283,6 +297,65 @@ describe('dashboard exporter v1', () => {
     const exported: any = await makeExportableV1(dashboardModel);
     expect(exported.panels[0].datasource).toEqual({ uid: '${DS_OTHER}', type: 'other' });
     expect(exported.panels[0].targets[0].datasource).toEqual({ uid: '${DS_OTHER}', type: 'other' });
+  });
+
+  it('should not attempt to templateize datasource variable ref if they have already been templateized', async () => {
+    const dashboard: Dashboard = {
+      title: 'My dashboard',
+      revision: 1,
+      editable: false,
+      graphTooltip: DashboardCursorSync.Off,
+      schemaVersion: 1,
+      timepicker: { hidden: true },
+      timezone: '',
+      panels: [
+        {
+          id: 1,
+          type: 'timeseries',
+          title: 'My panel title',
+          gridPos: { x: 0, y: 0, w: 1, h: 1 },
+          datasource: {
+            type: 'prometheus',
+            uid: '${ds_var}',
+          },
+        },
+      ],
+      templating: {
+        list: [
+          {
+            current: {
+              selected: false,
+              text: 'my-prometheus-datasource',
+              value: 'my-prometheus-datasource-uid',
+            },
+            hide: 0,
+            includeAll: false,
+            multi: false,
+            name: 'ds_var',
+            options: [],
+            query: 'prometheus',
+            refresh: 1,
+            regex: '',
+            skipUrlSync: false,
+            type: 'datasource',
+          },
+          // query variable here uses the datasource variable that has already been templateized
+          {
+            name: 'query_var',
+            datasource: { uid: '${ds_var}', type: 'prometheus' },
+            type: 'query',
+          },
+        ],
+      },
+    };
+    const dashboardModel = new DashboardModel(dashboard, undefined, {
+      getVariablesFromState: () => dashboard.templating!.list! as TypedVariableModel[],
+    });
+    const exported = (await makeExportableV1(dashboardModel)) as DashboardJson;
+
+    // @ts-ignore
+    const queryVarDatasource = exported.templating?.list[1].datasource;
+    expect(queryVarDatasource).toEqual({ uid: '${ds_var}', type: 'prometheus' });
   });
 
   describe('given dashboard with repeated panels', () => {
@@ -390,23 +463,23 @@ describe('dashboard exporter v1', () => {
 
       config.buildInfo.version = '3.0.2';
 
-      config.panels['graph'] = {
-        id: 'graph',
-        name: 'Graph',
-        info: { version: '1.1.0' },
-      } as PanelPluginMeta;
-
-      config.panels['table'] = {
-        id: 'table',
-        name: 'Table',
-        info: { version: '1.1.1' },
-      } as PanelPluginMeta;
-
-      config.panels['heatmap'] = {
-        id: 'heatmap',
-        name: 'Heatmap',
-        info: { version: '1.1.2' },
-      } as PanelPluginMeta;
+      setPanelPluginMetas({
+        graph: {
+          id: 'graph',
+          name: 'Graph',
+          info: { version: '1.1.0' },
+        } as PanelPluginMeta,
+        table: {
+          id: 'table',
+          name: 'Table',
+          info: { version: '1.1.1' },
+        } as PanelPluginMeta,
+        heatmap: {
+          id: 'heatmap',
+          name: 'Heatmap',
+          info: { version: '1.1.2' },
+        } as PanelPluginMeta,
+      });
 
       dash = new DashboardModel(
         dash,
@@ -431,6 +504,10 @@ describe('dashboard exporter v1', () => {
         exported = clean;
         done();
       });
+    });
+
+    afterEach(() => {
+      setPanelPluginMetas({});
     });
 
     it('should replace datasource refs', () => {
@@ -648,6 +725,35 @@ describe('dashboard exporter v2', () => {
     const annotationQuery = dashboard.annotations[0];
 
     expect(annotationQuery.spec.query?.datasource?.name).toBeUndefined();
+  });
+
+  it('should assign export labels to data queries during export', async () => {
+    const { dashboard } = await setup();
+
+    const panel = dashboard.elements['panel-1'];
+    if (panel.kind !== 'Panel') {
+      throw new Error('Panel should be a Panel');
+    }
+    const panelQuery = panel.spec.data.spec.queries[0];
+    expect(panelQuery.spec.query.labels?.[ExportLabel]).toBe('prometheus-1');
+
+    const queryVariable = dashboard.variables.find(
+      (variable) => variable.kind === 'QueryVariable'
+    ) as QueryVariableKind;
+    expect(queryVariable.spec.query.labels?.[ExportLabel]).toBe('prometheus-1');
+
+    const groupByVariable = dashboard.variables.find(
+      (variable) => variable.kind === 'GroupByVariable'
+    ) as GroupByVariableKind;
+    expect(groupByVariable.labels?.[ExportLabel]).toBe('prometheus-2');
+
+    const adhocVariable = dashboard.variables.find(
+      (variable) => variable.kind === 'AdhocVariable'
+    ) as AdhocVariableKind;
+    expect(adhocVariable.labels?.[ExportLabel]).toBe('prometheus-3');
+
+    const annotationQuery = dashboard.annotations[0];
+    expect(annotationQuery.spec.query.labels?.[ExportLabel]).toBe('prometheus-4');
   });
 
   it('should not remove datasource ref from panel that uses a datasource variable', async () => {

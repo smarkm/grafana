@@ -3,16 +3,14 @@ package shorturlimpl
 import (
 	"context"
 	"fmt"
-	"path"
 	"strings"
 	"time"
 
 	"github.com/grafana/grafana/pkg/api/dtos"
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/services/shorturls"
-	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/util"
-	"github.com/teris-io/shortid"
 )
 
 var getTime = time.Now
@@ -29,7 +27,7 @@ func ProvideService(db db.DB) *ShortURLService {
 	}
 }
 
-func (s ShortURLService) GetShortURLByUID(ctx context.Context, user *user.SignedInUser, uid string) (*shorturls.ShortUrl, error) {
+func (s ShortURLService) GetShortURLByUID(ctx context.Context, user identity.Requester, uid string) (*shorturls.ShortUrl, error) {
 	return s.SQLStore.Get(ctx, user, uid)
 }
 
@@ -41,23 +39,16 @@ func (s ShortURLService) List(ctx context.Context, orgID int64) ([]*shorturls.Sh
 	return s.SQLStore.List(ctx, orgID)
 }
 
-func (s ShortURLService) CreateShortURL(ctx context.Context, user *user.SignedInUser, cmd *dtos.CreateShortURLCmd) (*shorturls.ShortUrl, error) {
+func (s ShortURLService) CreateShortURL(ctx context.Context, user identity.Requester, cmd *dtos.CreateShortURLCmd) (*shorturls.ShortUrl, error) {
 	relPath := strings.TrimSpace(cmd.Path)
 
-	if path.IsAbs(relPath) {
-		return nil, shorturls.ErrShortURLAbsolutePath.Errorf("expected relative path: %s", relPath)
-	}
-	if strings.Contains(relPath, "../") {
-		return nil, shorturls.ErrShortURLInvalidPath.Errorf("path cannot contain '../': %s", relPath)
+	if err := shorturls.ValidateRelativePath(relPath); err != nil {
+		return nil, err
 	}
 
 	uid := cmd.UID
 	if uid == "" {
-		var err error
-		uid, err = shortid.Generate()
-		if err != nil {
-			return nil, shorturls.ErrShortURLInternal.Errorf("failed to generate uid: %w", err)
-		}
+		uid = util.GenerateShortUID()
 	} else {
 		// Ensure the UID is valid
 		if !util.IsValidShortUID(uid) {
@@ -79,12 +70,12 @@ func (s ShortURLService) CreateShortURL(ctx context.Context, user *user.SignedIn
 
 	now := time.Now().Unix()
 	shortURL := shorturls.ShortUrl{
-		OrgId:     user.OrgID,
+		OrgId:     user.GetOrgID(),
 		Uid:       uid,
 		Path:      relPath,
-		CreatedBy: user.UserID,
 		CreatedAt: now,
 	}
+	shortURL.CreatedBy, _ = user.GetInternalID()
 
 	if err := s.SQLStore.Insert(ctx, &shortURL); err != nil {
 		return nil, shorturls.ErrShortURLInternal.Errorf("failed to insert shorturl: %w", err)

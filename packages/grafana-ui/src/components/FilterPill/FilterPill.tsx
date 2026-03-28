@@ -15,6 +15,11 @@ export interface FilterPillProps {
   icon?: IconName;
 }
 
+/**
+ * A component used for quick toggling on/off filters. Mostly used in inline form components and transformation/query editors.
+ *
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/inputs-filterpill--docs
+ */
 export const FilterPill = ({ label, selected, onClick, icon = 'check' }: FilterPillProps) => {
   const styles = useStyles2(getStyles);
   const clearButton = useStyles2(clearButtonStyles);
@@ -51,6 +56,7 @@ const getStyles = (theme: GrafanaTheme2) => {
     selected: css({
       color: theme.colors.text.primary,
       background: theme.colors.action.selected,
+      border: `1px solid ${theme.colors.action.selectedBorder}`,
 
       '&:hover': {
         background: theme.colors.action.focus,

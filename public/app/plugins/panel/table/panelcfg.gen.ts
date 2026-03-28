@@ -8,17 +8,26 @@
 //
 // Run 'make gen-cue' from repository root to regenerate.
 
+// Generated from public/app/plugins/panel/table/panelcfg.cue file.
+
 import * as ui from '@grafana/schema';
 
+/**
+ * @deprecated - use common in /packages/grafana-schema/src/common/table.cue instead i.e. `import { TableOptions } from '@grafana/schema';`
+ */
 export interface Options {
   /**
    * Controls the height of the rows
    */
   cellHeight?: ui.TableCellHeight;
   /**
-   * Controls footer options
+   * If true, disables all keyboard events in the table. this is used when previewing a table (i.e. suggestions)
    */
-  footer?: ui.TableFooterOptions;
+  disableKeyboardEvents?: boolean;
+  /**
+   * Enable pagination on the table
+   */
+  enablePagination?: boolean;
   /**
    * Represents the index of the selected frame
    */
@@ -49,20 +58,6 @@ export interface Options {
 
 export const defaultOptions: Partial<Options> = {
   cellHeight: ui.TableCellHeight.Sm,
-  footer: {
-    /**
-     * Controls whether the footer should be shown
-     */
-    show: false,
-    /**
-     * Controls whether the footer should show the total number of rows on Count calculation
-     */
-    countRows: false,
-    /**
-     * Represents the selected calculations
-     */
-    reducer: [],
-  },
   frameIndex: 0,
   showHeader: true,
   showTypeIcons: false,

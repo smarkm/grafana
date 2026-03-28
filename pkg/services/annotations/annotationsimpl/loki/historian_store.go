@@ -8,7 +8,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/grafana/grafana/pkg/services/ngalert/lokiclient"
+	"github.com/grafana/alerting/notify/historian/lokiclient"
+	"github.com/grafana/grafana/pkg/services/ngalert/lokiconfig"
 	"golang.org/x/exp/constraints"
 
 	"github.com/grafana/grafana/pkg/components/simplejson"
@@ -61,7 +62,7 @@ func NewLokiHistorianStore(cfg setting.UnifiedAlertingStateHistorySettings, db d
 	if !useStore(cfg) {
 		return nil
 	}
-	lokiCfg, err := lokiclient.NewLokiConfig(cfg.LokiSettings)
+	lokiCfg, err := lokiconfig.NewLokiConfig(cfg.LokiSettings)
 	if err != nil {
 		// this config error is already handled elsewhere
 		return nil
@@ -172,11 +173,12 @@ func (r *LokiHistorianStore) annotationsFromStream(stream lokiclient.Stream, ac 
 			continue
 		}
 
-		annotationText, annotationData := historian.BuildAnnotationTextAndData(
+		annotationText, annotationData, _ := historian.BuildAnnotationTextAndData(
 			historymodel.RuleMeta{
 				Title: entry.RuleTitle,
 			},
 			transition.State,
+			0, // maxTagsLength not used for Loki store
 		)
 
 		items = append(items, &annotations.ItemDTO{
@@ -204,9 +206,6 @@ func (r *LokiHistorianStore) GetTags(ctx context.Context, query annotations.Tags
 func hasAccess(entry historian.LokiEntry, resources accesscontrol.AccessResources) bool {
 	orgFilter := resources.CanAccessOrgAnnotations && entry.DashboardUID == ""
 	dashFilter := func() bool {
-		if !resources.CanAccessDashAnnotations {
-			return false
-		}
 		_, canAccess := resources.Dashboards[entry.DashboardUID]
 		return canAccess
 	}

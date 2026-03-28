@@ -125,12 +125,15 @@ func runTestResourcePermissionScenarios(t *testing.T, backend resource.StorageBa
 			resourceUID := fmt.Sprintf("test123-%d", i)
 
 			// Create a mock access client with the test case's permission map
-			checksPerformed := []types.CheckRequest{}
+			checksPerformed := []CheckRequestEX{}
 			mockAccess := &mockAccessClient{
 				allowed:    false, // Default to false
 				allowedMap: tc.permissionMap,
-				checkFn: func(req types.CheckRequest) {
-					checksPerformed = append(checksPerformed, req)
+				checkFn: func(req types.CheckRequest, folder string) {
+					checksPerformed = append(checksPerformed, CheckRequestEX{
+						CheckRequest: req,
+						Folder:       folder,
+					})
 				},
 			}
 
@@ -167,7 +170,7 @@ func runTestResourcePermissionScenarios(t *testing.T, backend resource.StorageBa
 					}
 				}`, resourceName, resourceUID, nsPrefix+"-ns1", tc.initialFolder, i)
 
-				checksPerformed = []types.CheckRequest{}
+				checksPerformed = []CheckRequestEX{}
 				created, err := server.Create(ctx, &resourcepb.CreateRequest{
 					Value: []byte(resourceJSON),
 					Key:   key,
@@ -232,7 +235,7 @@ func runTestResourcePermissionScenarios(t *testing.T, backend resource.StorageBa
 				}`, resourceName, resourceUID, nsPrefix+"-ns1", tc.targetFolder, i)
 
 				mockAccess.allowed = false // Reset to use the map
-				checksPerformed = []types.CheckRequest{}
+				checksPerformed = []CheckRequestEX{}
 
 				updated, err := server.Update(ctx, &resourcepb.UpdateRequest{
 					Key:             key,
@@ -291,17 +294,12 @@ func runTestListTrashAccessControl(t *testing.T, backend resource.StorageBackend
 	}
 
 	mockAccess := &mockAccessClient{
-		allowed: true, // Allow regular access
-		compileFn: func(user types.AuthInfo, req types.ListRequest) types.ItemChecker {
-			return func(name, folder string) bool {
-				if req.Verb == utils.VerbSetPermissions {
-					if requester, ok := user.(identity.Requester); ok && requester.GetIsGrafanaAdmin() {
-						return true // Admin users can access trash
-					}
-					return false // Non-admin users cannot access trash
-				}
-				return false
+		userCheckFn: func(user types.AuthInfo, verb, name, folder string) bool {
+			if verb == utils.VerbSetPermissions {
+				requester, ok := user.(identity.Requester)
+				return ok && requester.GetIsGrafanaAdmin()
 			}
+			return true // allow regular CRUD
 		},
 	}
 
@@ -494,35 +492,46 @@ func runTestListTrashAccessControl(t *testing.T, backend resource.StorageBackend
 type mockAccessClient struct {
 	allowed    bool
 	allowedMap map[string]bool
-	checkFn    func(types.CheckRequest)
-	compileFn  func(user types.AuthInfo, req types.ListRequest) types.ItemChecker
+	checkFn    func(types.CheckRequest, string)
+	// userCheckFn, when set, fully controls the Check result for every call.
+	userCheckFn func(user types.AuthInfo, verb, name, folder string) bool
 }
 
-func (m *mockAccessClient) Check(ctx context.Context, user types.AuthInfo, req types.CheckRequest) (types.CheckResponse, error) {
+func (m *mockAccessClient) Check(ctx context.Context, user types.AuthInfo, req types.CheckRequest, folder string) (types.CheckResponse, error) {
 	if m.checkFn != nil {
-		m.checkFn(req)
+		m.checkFn(req, folder)
 	}
 
 	// Check specific folder:verb mappings if provided
 	if m.allowedMap != nil {
-		key := fmt.Sprintf("%s:%s", req.Folder, req.Verb)
+		key := fmt.Sprintf("%s:%s", folder, req.Verb)
 		if allowed, exists := m.allowedMap[key]; exists {
 			return types.CheckResponse{Allowed: allowed}, nil
 		}
 	}
 
+	if m.userCheckFn != nil {
+		return types.CheckResponse{Allowed: m.userCheckFn(user, req.Verb, req.Name, folder)}, nil
+	}
+
 	return types.CheckResponse{Allowed: m.allowed}, nil
 }
 
-func (m *mockAccessClient) Compile(ctx context.Context, user types.AuthInfo, req types.ListRequest) (types.ItemChecker, error) {
-	if m.compileFn != nil {
-		return m.compileFn(user, req), nil
-	}
+func (m *mockAccessClient) Compile(ctx context.Context, user types.AuthInfo, req types.ListRequest) (types.ItemChecker, types.Zookie, error) {
 	return func(name, folder string) bool {
 		key := fmt.Sprintf("%s:%s", folder, req.Verb)
 		if allowed, exists := m.allowedMap[key]; exists {
 			return allowed
 		}
 		return m.allowed
-	}, nil
+	}, types.NoopZookie{}, nil
+}
+
+func (m *mockAccessClient) BatchCheck(ctx context.Context, user types.AuthInfo, req types.BatchCheckRequest) (types.BatchCheckResponse, error) {
+	return types.BatchCheckResponse{}, fmt.Errorf("not implemented")
+}
+
+type CheckRequestEX struct {
+	types.CheckRequest
+	Folder string
 }

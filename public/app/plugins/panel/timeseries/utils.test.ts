@@ -1,6 +1,9 @@
 import { createTheme, FieldType, createDataFrame, toDataFrame } from '@grafana/data';
+import { LineInterpolation } from '@grafana/ui';
 
-import { prepareGraphableFields } from './utils';
+import { AdHocFilterItem } from '../../../../../packages/grafana-ui/src/components/Table/TableNG/types';
+
+import { getGroupedFilters, prepareGraphableFields } from './utils';
 
 describe('prepare timeseries graph', () => {
   it('errors with no time fields', () => {
@@ -14,6 +17,21 @@ describe('prepare timeseries graph', () => {
     ];
     const frames = prepareGraphableFields(input, createTheme());
     expect(frames).toBeNull();
+  });
+
+  it('does not needlessly copy clean arrays', () => {
+    const values = [1, 2];
+
+    const df = createDataFrame({
+      fields: [
+        { name: 'time', type: FieldType.time, values: [1000, 2000] },
+        { name: 'a', values },
+      ],
+    });
+    const frames = prepareGraphableFields([df], createTheme());
+
+    const field = frames![0].fields.find((f) => f.name === 'a');
+    expect(field!.values).toBe(values);
   });
 
   it('requires a number or boolean value', () => {
@@ -79,7 +97,7 @@ describe('prepare timeseries graph', () => {
     const df = createDataFrame({
       fields: [
         { name: 'time', type: FieldType.time, values: [995, 9996, 9997, 9998, 9999] },
-        { name: 'a', values: [-10, NaN, 10, -Infinity, +Infinity] },
+        { name: 'a', values: [-10, NaN, 10, -Infinity, +Infinity, null] },
       ],
     });
     const frames = prepareGraphableFields([df], createTheme());
@@ -90,6 +108,7 @@ describe('prepare timeseries graph', () => {
         -10,
         null,
         10,
+        null,
         null,
         null,
       ]
@@ -141,5 +160,119 @@ describe('prepare timeseries graph', () => {
       ]
     `);
     expect(frames![0].length).toEqual(6);
+  });
+
+  describe('boolean fields', () => {
+    it('will set line interpolation to an appropriate mode for boolean fields', () => {
+      const df = createDataFrame({
+        fields: [
+          { name: 'time', type: FieldType.time, values: [1, 2, 3] },
+          { name: 'a', type: FieldType.boolean, values: [true, false, true] },
+        ],
+      });
+
+      const frames = prepareGraphableFields([df], createTheme());
+      const field = frames![0].fields.find((f) => f.name === 'a');
+      expect(field?.config.custom.lineInterpolation).toEqual(LineInterpolation.StepAfter);
+      expect(df.fields[1].config?.custom).toBeUndefined();
+    });
+
+    // #112194 - mutating this value directly can cause a memory leak
+    it('does not mutate the underlying lineInterpolation value', () => {
+      const df = createDataFrame({
+        fields: [
+          { name: 'time', type: FieldType.time, values: [1, 2, 3] },
+          {
+            name: 'a',
+            type: FieldType.boolean,
+            values: [true, false, true],
+            config: { custom: { lineInterpolation: LineInterpolation.Smooth } },
+          },
+        ],
+      });
+
+      const frames = prepareGraphableFields([df], createTheme());
+      expect(df.fields[1].config.custom.lineInterpolation).toEqual(LineInterpolation.Smooth);
+      expect(frames![0].fields[1].config.custom.lineInterpolation).toEqual(LineInterpolation.StepAfter);
+    });
+  });
+
+  describe('getGroupedFilters', () => {
+    it('returns empty array if no field', () => {
+      const df = createDataFrame({
+        fields: [{ name: 'time', type: FieldType.time, values: [1, 2, 3] }],
+      });
+
+      expect(getGroupedFilters(df, 1, jest.fn())).toEqual([]);
+    });
+
+    it('returns empty array if no labels', () => {
+      const df = createDataFrame({
+        fields: [
+          { name: 'time', type: FieldType.time, values: [1, 2, 3] },
+          {
+            name: 'value',
+            type: FieldType.number,
+            values: [1, 2, 3],
+          },
+        ],
+      });
+
+      expect(getGroupedFilters(df, 1, jest.fn())).toEqual([]);
+    });
+
+    it('returns empty array if field not filterable', () => {
+      const df = createDataFrame({
+        fields: [
+          { name: 'time', type: FieldType.time, values: [1, 2, 3] },
+          {
+            name: 'value',
+            type: FieldType.number,
+            values: [1, 2, 3],
+            labels: {
+              test: 'value',
+              label: 'value2',
+            },
+          },
+        ],
+      });
+
+      expect(getGroupedFilters(df, 1, jest.fn())).toEqual([]);
+    });
+
+    it('returns grouped filters', () => {
+      const df = createDataFrame({
+        fields: [
+          { name: 'time', type: FieldType.time, values: [1, 2, 3] },
+          {
+            name: 'value',
+            type: FieldType.number,
+            values: [1, 2, 3],
+            labels: {
+              test: 'value',
+              label: 'value2',
+            },
+            config: {
+              filterable: true,
+            },
+          },
+        ],
+      });
+
+      const filtersGroupingFn = (filters: AdHocFilterItem[]) => filters;
+
+      expect(getGroupedFilters(df, 1, filtersGroupingFn)).toEqual([
+        {
+          key: 'test',
+          operator: '=',
+          value: 'value',
+        },
+        {
+          key: 'label',
+          operator: '=',
+          value: 'value2',
+        },
+      ]);
+    });
   });
 });

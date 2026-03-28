@@ -38,6 +38,8 @@ resource "grafana_contact_point" "contact_point_2b661702215368fe" {
     url                     = "[REDACTED]"
     title                   = "test-title"
     message                 = "test-message"
+    hide_open_button        = true
+    hide_version_info       = true
   }
 
   jira {
@@ -252,7 +254,7 @@ resource "grafana_contact_point" "contact_point_2b661702215368fe" {
 
   webhook {
     disable_resolve_message = true
-    url                     = "http://localhost"
+    url                     = "grafana://noop"
     http_method             = "PUT"
     max_alerts              = 2
     authorization_scheme    = "basic"
@@ -261,14 +263,14 @@ resource "grafana_contact_point" "contact_point_2b661702215368fe" {
     title                   = "test-title"
     message                 = "test-message"
 
-    tlsConfig {
+    tls_config {
       insecure_skip_verify = false
       ca_certificate       = "[REDACTED]"
       client_certificate   = "[REDACTED]"
       client_key           = "[REDACTED]"
     }
 
-    hmacConfig {
+    hmac_config {
       secret           = "[REDACTED]"
       header           = "X-Grafana-Alerting-Signature"
       timestamp_header = "X-Grafana-Alerting-Timestamp"

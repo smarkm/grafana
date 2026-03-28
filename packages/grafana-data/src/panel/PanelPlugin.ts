@@ -1,4 +1,4 @@
-import { set } from 'lodash';
+import { defaultsDeep, set } from 'lodash';
 import { ComponentClass, ComponentType } from 'react';
 
 import { FieldConfigOptionsRegistry } from '../field/FieldConfigOptionsRegistry';
@@ -7,7 +7,6 @@ import { PanelModel } from '../types/dashboard';
 import { FieldConfigProperty, FieldConfigSource } from '../types/fieldOverrides';
 import {
   PanelPluginMeta,
-  VisualizationSuggestionsSupplier,
   PanelProps,
   PanelEditorProps,
   PanelMigrationHandler,
@@ -15,10 +14,21 @@ import {
   PanelPluginDataSupport,
 } from '../types/panel';
 import { GrafanaPlugin } from '../types/plugin';
+import {
+  getSuggestionHash,
+  PanelPluginVisualizationSuggestion,
+  VisualizationSuggestion,
+  VisualizationSuggestionsSupplierDeprecated,
+  VisualizationSuggestionsSupplier,
+  VisualizationPresetsContext,
+  VisualizationPresetsSupplier,
+  VisualizationSuggestionsBuilder,
+} from '../types/suggestions';
 import { FieldConfigEditorBuilder, PanelOptionsEditorBuilder } from '../utils/OptionsUIBuilders';
 import { deprecationWarning } from '../utils/deprecationWarning';
 
 import { createFieldConfigRegistry } from './registryFactories';
+import { PanelDataSummary } from './suggestions/getPanelDataSummary';
 
 /** @beta */
 export type StandardOptionConfig = {
@@ -109,7 +119,8 @@ export class PanelPlugin<
   };
 
   private optionsSupplier?: PanelOptionsSupplier<TOptions>;
-  private suggestionsSupplier?: VisualizationSuggestionsSupplier;
+  private suggestionsSupplier?: VisualizationSuggestionsSupplier<TOptions, TFieldConfigOptions>;
+  private presetsSupplier?: VisualizationPresetsSupplier<TOptions, TFieldConfigOptions>;
 
   panel: ComponentType<PanelProps<TOptions>> | null;
   editor?: ComponentClass<PanelEditorProps<TOptions>>;
@@ -121,11 +132,6 @@ export class PanelPlugin<
     annotations: false,
     alertStates: false,
   };
-
-  /**
-   * Legacy angular ctrl. If this exists it will be used instead of the panel
-   */
-  angularPanelCtrl?: any;
 
   constructor(panel: ComponentType<PanelProps<TOptions>> | null) {
     super();
@@ -368,20 +374,119 @@ export class PanelPlugin<
   }
 
   /**
-   * Sets function that can return visualization examples and suggestions.
-   * @alpha
+   * @deprecated use VisualizationSuggestionsSupplier
    */
-  setSuggestionsSupplier(supplier: VisualizationSuggestionsSupplier) {
+  setSuggestionsSupplier(supplier: VisualizationSuggestionsSupplierDeprecated): this;
+  /**
+   * @alpha
+   * sets function that can return visualization examples and suggestions.
+   */
+  setSuggestionsSupplier(supplier: VisualizationSuggestionsSupplier<TOptions, TFieldConfigOptions>): this;
+  setSuggestionsSupplier(
+    supplier:
+      | VisualizationSuggestionsSupplier<TOptions, TFieldConfigOptions>
+      | VisualizationSuggestionsSupplierDeprecated
+  ): this {
+    if (typeof supplier !== 'function') {
+      deprecationWarning(
+        'PanelPlugin',
+        'plugin.setSuggestionsSupplier(new Supplier())',
+        'plugin.setSuggestionsSupplier(dataSummary => [...])'
+      );
+      return this;
+    }
     this.suggestionsSupplier = supplier;
     return this;
   }
 
   /**
-   * Returns the suggestions supplier
    * @alpha
+   * get suggestions based on the PanelDataSummary
    */
-  getSuggestionsSupplier(): VisualizationSuggestionsSupplier | undefined {
-    return this.suggestionsSupplier;
+  getSuggestions(
+    panelDataSummary: PanelDataSummary
+  ): Array<PanelPluginVisualizationSuggestion<TOptions, TFieldConfigOptions>> | void {
+    const withDefaults = (
+      suggestion: VisualizationSuggestion<TOptions, TFieldConfigOptions>
+    ): Omit<PanelPluginVisualizationSuggestion<TOptions, TFieldConfigOptions>, 'hash'> =>
+      defaultsDeep(suggestion, {
+        pluginId: this.meta.id,
+        name: this.meta.name,
+        options: {},
+        fieldConfig: {
+          defaults: {},
+          overrides: [],
+        },
+      } satisfies Omit<PanelPluginVisualizationSuggestion<TOptions, TFieldConfigOptions>, 'hash'>);
+    return this.suggestionsSupplier?.(panelDataSummary)?.map(
+      (s): PanelPluginVisualizationSuggestion<TOptions, TFieldConfigOptions> => {
+        const suggestionWithDefaults = withDefaults(s);
+        return Object.assign(suggestionWithDefaults, { hash: getSuggestionHash(suggestionWithDefaults) });
+      }
+    );
+  }
+
+  /**
+   * @alpha
+   * Register a supplier of presets for a panel plugin
+   */
+  setPresetsSupplier(supplier: VisualizationPresetsSupplier<TOptions, TFieldConfigOptions>): this {
+    this.presetsSupplier = supplier;
+    return this;
+  }
+
+  /**
+   * @alpha
+   * Return style presets for a panel plugin
+   */
+  getPresets(
+    context: VisualizationPresetsContext = {}
+  ): Array<PanelPluginVisualizationSuggestion<TOptions, TFieldConfigOptions>> | void {
+    const withDefaults = (
+      suggestion: VisualizationSuggestion<TOptions, TFieldConfigOptions>
+    ): Omit<PanelPluginVisualizationSuggestion<TOptions, TFieldConfigOptions>, 'hash'> =>
+      defaultsDeep(suggestion, {
+        pluginId: this.meta.id,
+        name: this.meta.name,
+        options: {},
+        fieldConfig: {
+          defaults: {},
+          overrides: [],
+        },
+      } satisfies Omit<PanelPluginVisualizationSuggestion<TOptions, TFieldConfigOptions>, 'hash'>);
+
+    return this.presetsSupplier?.(context)?.map((s) => {
+      const withDefaultsApplied = withDefaults(s);
+      return Object.assign(withDefaultsApplied, { hash: getSuggestionHash(withDefaultsApplied) });
+    });
+  }
+
+  /**
+   * @deprecated use getSuggestions
+   * we have to keep this method intact to support cloud-onboarding plugin.
+   */
+  getSuggestionsSupplier() {
+    const withDefaults = (
+      suggestion: VisualizationSuggestion<TOptions, TFieldConfigOptions>
+    ): Omit<PanelPluginVisualizationSuggestion<TOptions, TFieldConfigOptions>, 'hash'> =>
+      defaultsDeep(suggestion, {
+        pluginId: this.meta.id,
+        name: this.meta.name,
+        options: {},
+        fieldConfig: {
+          defaults: {},
+          overrides: [],
+        },
+      } satisfies Omit<PanelPluginVisualizationSuggestion<TOptions, TFieldConfigOptions>, 'hash'>);
+
+    return {
+      getSuggestionsForData: (builder: VisualizationSuggestionsBuilder) => {
+        deprecationWarning('PanelPlugin', 'getSuggestionsSupplier()', 'getSuggestions(panelDataSummary)');
+        this.suggestionsSupplier?.(builder.dataSummary)?.forEach((s) => {
+          builder.getListAppender(withDefaults(s)).append(s);
+        });
+      },
+    };
   }
 
   hasPluginId(pluginId: string) {

@@ -9,12 +9,17 @@ type UserSpec struct {
 	EmailVerified bool   `json:"emailVerified"`
 	GrafanaAdmin  bool   `json:"grafanaAdmin"`
 	Login         string `json:"login"`
-	Name          string `json:"name"`
-	// What to do with salt, rands and password?
-	Provisioned bool `json:"provisioned"`
+	Title         string `json:"title"`
+	Provisioned   bool   `json:"provisioned"`
+	Role          string `json:"role"`
 }
 
 // NewUserSpec creates a new UserSpec object.
 func NewUserSpec() *UserSpec {
 	return &UserSpec{}
+}
+
+// OpenAPIModelName returns the OpenAPI model name for UserSpec.
+func (UserSpec) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.iam.pkg.apis.iam.v0alpha1.UserSpec"
 }

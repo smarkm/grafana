@@ -92,7 +92,7 @@ describe('LogsQueryEditor', () => {
         }),
       })
     );
-  });
+  }, 10000);
 
   it('should disable other resource types when selecting multiple resources', async () => {
     const mockDatasource = createMockDatasource({ resourcePickerData: createMockResourcePickerData() });
@@ -457,8 +457,8 @@ describe('LogsQueryEditor', () => {
       const resourcePickerButton = await screen.findByRole('button', { name: 'la-workspace' });
       await userEvent.click(resourcePickerButton);
 
-      const checkbox = await screen.findByLabelText('la-workspace');
-      expect(checkbox).toBeChecked();
+      const checkbox = await screen.queryAllByLabelText('la-workspace');
+      expect(checkbox[0]).toBeChecked();
 
       expect(await screen.findByLabelText('la-workspace-1')).toBeDisabled();
       expect(

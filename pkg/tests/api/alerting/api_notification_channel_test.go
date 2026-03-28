@@ -16,33 +16,37 @@ import (
 	"testing"
 	"time"
 
+	alertingModels "github.com/grafana/alerting/models"
 	"github.com/grafana/alerting/receivers"
-	alertingLine "github.com/grafana/alerting/receivers/line"
-	alertingPushover "github.com/grafana/alerting/receivers/pushover"
-	alertingSlack "github.com/grafana/alerting/receivers/slack"
-	alertingTelegram "github.com/grafana/alerting/receivers/telegram"
-	alertingThreema "github.com/grafana/alerting/receivers/threema"
+	alertingLine "github.com/grafana/alerting/receivers/line/v1"
+	alertingPushover "github.com/grafana/alerting/receivers/pushover/v1"
+	alertingSlack "github.com/grafana/alerting/receivers/slack/v1"
+	alertingTelegram "github.com/grafana/alerting/receivers/telegram/v1"
+	alertingThreema "github.com/grafana/alerting/receivers/threema/v1"
 	alertingTemplates "github.com/grafana/alerting/templates"
 	"github.com/prometheus/alertmanager/template"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/require"
 
 	"github.com/grafana/grafana/pkg/expr"
+	"github.com/grafana/grafana/pkg/server"
+	"github.com/grafana/grafana/pkg/services/ngalert/models"
 	"github.com/grafana/grafana/pkg/util"
 
 	"github.com/grafana/grafana/pkg/infra/db"
 	apimodels "github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
+	"github.com/grafana/grafana/pkg/services/ngalert/notifier"
 	"github.com/grafana/grafana/pkg/services/ngalert/store"
 	"github.com/grafana/grafana/pkg/services/notifications"
 	"github.com/grafana/grafana/pkg/services/org"
 	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/tests/testinfra"
+	"github.com/grafana/grafana/pkg/util/testutil"
 )
 
 func TestIntegrationTestReceivers(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	t.Run("assert no receivers returns 400 Bad Request", func(t *testing.T) {
@@ -137,7 +141,7 @@ func TestIntegrationTestReceivers(t *testing.T) {
 				"__dashboardUid__": "dashboard_uid",
 				"__orgId__": "1",
 				"__panelId__": "1",
-				"__value_string__": "[ var='B' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} value=22 ], [ var='C' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} value=1 ]",
+				"__value_string__": "[ var='B' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} type='reduce' value=22 ], [ var='C' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} type='threshold' value=1 ]",
 				"__values__": "{\"B\":22,\"C\":1}"
 			},
 			"labels": {
@@ -225,7 +229,7 @@ func TestIntegrationTestReceivers(t *testing.T) {
 				"__dashboardUid__": "dashboard_uid",
 				"__orgId__": "1",
 				"__panelId__": "1",
-				"__value_string__": "[ var='B' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} value=22 ], [ var='C' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} value=1 ]",
+				"__value_string__": "[ var='B' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} type='reduce' value=22 ], [ var='C' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} type='threshold' value=1 ]",
 				"__values__": "{\"B\":22,\"C\":1}"
 			},
 			"labels": {
@@ -307,7 +311,7 @@ func TestIntegrationTestReceivers(t *testing.T) {
 					"__dashboardUid__": "dashboard_uid",
 					"__orgId__": "1",
 					"__panelId__": "1",
-					"__value_string__": "[ var='B' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} value=22 ], [ var='C' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} value=1 ]",
+					"__value_string__": "[ var='B' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} type='reduce' value=22 ], [ var='C' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} type='threshold' value=1 ]",
 					"__values__": "{\"B\":22,\"C\":1}"
 				},
 				"labels": {
@@ -400,7 +404,7 @@ func TestIntegrationTestReceivers(t *testing.T) {
 				"__dashboardUid__": "dashboard_uid",
 				"__orgId__": "1",
 				"__panelId__": "1",
-				"__value_string__": "[ var='B' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} value=22 ], [ var='C' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} value=1 ]",
+				"__value_string__": "[ var='B' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} type='reduce' value=22 ], [ var='C' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} type='threshold' value=1 ]",
 				"__values__": "{\"B\":22,\"C\":1}"
 			},
 			"labels": {
@@ -506,7 +510,7 @@ func TestIntegrationTestReceivers(t *testing.T) {
 				"__dashboardUid__": "dashboard_uid",
 				"__orgId__": "1",
 				"__panelId__": "1",
-				"__value_string__": "[ var='B' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} value=22 ], [ var='C' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} value=1 ]",
+				"__value_string__": "[ var='B' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} type='reduce' value=22 ], [ var='C' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} type='threshold' value=1 ]",
 				"__values__": "{\"B\":22,\"C\":1}"
 			},
 			"labels": {
@@ -547,9 +551,8 @@ func TestIntegrationTestReceivers(t *testing.T) {
 }
 
 func TestIntegrationTestReceiversAlertCustomization(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	t.Run("assert custom annotations and labels are sent", func(t *testing.T) {
@@ -806,7 +809,7 @@ func TestIntegrationTestReceiversAlertCustomization(t *testing.T) {
 				"__dashboardUid__": "dashboard_uid",
 				"__orgId__": "1",
 				"__panelId__": "1",
-				"__value_string__": "[ var='B' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} value=22 ], [ var='C' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} value=1 ]",
+				"__value_string__": "[ var='B' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} type='reduce' value=22 ], [ var='C' labels={__name__=go_threads, instance=host.docker.internal:3000, job=grafana} type='threshold' value=1 ]",
 				"__values__": "{\"B\":22,\"C\":1}"
 			},
 			"labels": {
@@ -837,9 +840,8 @@ func TestIntegrationTestReceiversAlertCustomization(t *testing.T) {
 }
 
 func TestIntegrationNotificationChannels(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
@@ -898,11 +900,17 @@ func TestIntegrationNotificationChannels(t *testing.T) {
 
 	{
 		// There are no notification channel config initially - so it returns the default configuration.
-		alertsURL := fmt.Sprintf("http://grafana:password@%s/api/alertmanager/grafana/config/api/v1/alerts", grafanaListedAddr)
+		alertsURL := fmt.Sprintf("http://admin:admin@%s/api/alertmanager/grafana/config/api/v1/alerts", grafanaListedAddr)
 		resp := getRequest(t, alertsURL, http.StatusOK) // nolint
 		b, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
-		require.JSONEq(t, defaultAlertmanagerConfigJSON, string(b))
+		// Admin sees autogenerated routes; strip them before comparing against the user-defined config.
+		var cfg apimodels.GettableUserConfig
+		require.NoError(t, json.Unmarshal(b, &cfg))
+		notifier.RemoveAutogenConfigIfExists(cfg.AlertmanagerConfig.Route)
+		stripped, err := json.Marshal(cfg)
+		require.NoError(t, err)
+		require.JSONEq(t, defaultAlertmanagerConfigJSON, string(stripped))
 	}
 
 	{
@@ -910,26 +918,28 @@ func TestIntegrationNotificationChannels(t *testing.T) {
 		apiClient.CreateFolder(t, "default", "default")
 
 		// Post the alertmanager config.
-		cfg := apimodels.PostableUserConfig{}
-		err := json.Unmarshal([]byte(amConfig), &cfg)
-		require.NoError(t, err)
-		err = env.Server.HTTPServer.AlertNG.MultiOrgAlertmanager.SaveAndApplyAlertmanagerConfiguration(context.Background(), 1, cfg)
-		require.NoError(t, err)
+		saveAndApplyAlertmanagerConfiguration(t, env, 1, amConfig)
 
 		// Verifying that all the receivers and routes have been registered.
-		alertsURL := fmt.Sprintf("http://grafana:password@%s/api/alertmanager/grafana/config/api/v1/alerts", grafanaListedAddr)
+		alertsURL := fmt.Sprintf("http://admin:admin@%s/api/alertmanager/grafana/config/api/v1/alerts", grafanaListedAddr)
 		resp := getRequest(t, alertsURL, http.StatusOK) // nolint
 		b := getBody(t, resp.Body)
+		// Admin sees autogenerated routes; strip them before comparing against the user-defined config.
+		var cfg apimodels.GettableUserConfig
+		require.NoError(t, json.Unmarshal([]byte(b), &cfg))
+		notifier.RemoveAutogenConfigIfExists(cfg.AlertmanagerConfig.Route)
+		stripped, err := json.Marshal(cfg)
+		require.NoError(t, err)
 		re := regexp.MustCompile(`"uid":"([\w|-]*)"`)
 		e := getExpAlertmanagerConfigFromAPI(mockChannel.server.Addr)
-		require.JSONEq(t, e, string(re.ReplaceAll([]byte(b), []byte(`"uid":""`))))
+		require.JSONEq(t, e, string(re.ReplaceAll(stripped, []byte(`"uid":""`))))
 
 		// Check the receivers API. No errors nor attempts to notify should be registered.
 		receiversURL := fmt.Sprintf("http://grafana:password@%s/api/alertmanager/grafana/config/api/v1/receivers", grafanaListedAddr)
 		resp = getRequest(t, receiversURL, http.StatusOK) // nolint
 		b = getBody(t, resp.Body)
 
-		var receivers []apimodels.Receiver
+		var receivers []alertingModels.ReceiverStatus
 		err = json.Unmarshal([]byte(b), &receivers)
 		require.NoError(t, err)
 		for _, rcv := range receivers {
@@ -978,7 +988,7 @@ func TestIntegrationNotificationChannels(t *testing.T) {
 	resp := getRequest(t, receiversURL, http.StatusOK) // nolint
 	b := getBody(t, resp.Body)
 
-	var receivers []apimodels.Receiver
+	var receivers []alertingModels.ReceiverStatus
 	err := json.Unmarshal([]byte(b), &receivers)
 	require.NoError(t, err)
 	for _, rcv := range receivers {
@@ -998,7 +1008,7 @@ func TestIntegrationNotificationChannels(t *testing.T) {
 			}
 
 			// We don't have test alerts for the default notifier, continue iterating.
-			if rcv.Name == "grafana-default-email" {
+			if rcv.Name == "empty" {
 				return
 			}
 
@@ -1025,30 +1035,6 @@ func TestIntegrationNotificationChannels(t *testing.T) {
 				})
 			}
 		})
-	}
-
-	{
-		// Delete the configuration; so it returns the default configuration.
-		u := fmt.Sprintf("http://grafana:password@%s/api/alertmanager/grafana/config/api/v1/alerts", grafanaListedAddr)
-		req, err := http.NewRequest(http.MethodDelete, u, nil)
-		require.NoError(t, err)
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		require.NoError(t, err)
-		t.Cleanup(func() {
-			err := resp.Body.Close()
-			require.NoError(t, err)
-		})
-		b, err := io.ReadAll(resp.Body)
-		require.NoError(t, err)
-		require.Equal(t, 202, resp.StatusCode)
-		require.JSONEq(t, `{"message":"configuration deleted; the default is applied"}`, string(b))
-
-		alertsURL := fmt.Sprintf("http://grafana:password@%s/api/alertmanager/grafana/config/api/v1/alerts", grafanaListedAddr)
-		resp = getRequest(t, alertsURL, http.StatusOK) // nolint
-		b, err = io.ReadAll(resp.Body)
-		require.NoError(t, err)
-		require.JSONEq(t, defaultAlertmanagerConfigJSON, string(b))
 	}
 }
 
@@ -2440,9 +2426,10 @@ var expEmailNotifications = []*notifications.SendEmailCommandSync{
 						SilenceURL:   "http://localhost:3000/alerting/silence/new?alertmanager=grafana&matcher=__alert_rule_uid__%3DUID_EmailAlert&orgId=1",
 						DashboardURL: "",
 						PanelURL:     "",
+						RuleUID:      "UID_EmailAlert",
 						OrgID:        util.Pointer(int64(1)),
 						Values:       map[string]float64{"A": 1},
-						ValueString:  "[ var='A' labels={} value=1 ]",
+						ValueString:  "[ var='A' labels={} type='math' value=1 ]",
 					},
 				},
 				"GroupLabels":       template.KV{"alertname": "EmailAlert"},
@@ -2472,7 +2459,7 @@ var expNonEmailNotifications = map[string][]string{
 			  "title_link": "http://localhost:3000/alerting/grafana/UID_SlackAlert1/view?orgId=1",
 			  "text": "Integration Test ",
 			  "fallback": "Integration Test [FIRING:1] SlackAlert1 (default)",
-			  "footer": "Grafana v",
+			  "footer": "Grafana",
 			  "footer_icon": "https://grafana.com/static/assets/img/fav32.png",
 			  "color": "#D63232",
 			  "ts": %s,
@@ -2492,7 +2479,7 @@ var expNonEmailNotifications = map[string][]string{
 			  "title_link": "http://localhost:3000/alerting/grafana/UID_SlackAlert2/view?orgId=1",
 			  "text": "**Firing**\n\nValue: A=1\nLabels:\n - alertname = SlackAlert2\n - grafana_folder = default\nAnnotations:\nSource: http://localhost:3000/alerting/grafana/UID_SlackAlert2/view?orgId=1\nSilence: http://localhost:3000/alerting/silence/new?alertmanager=grafana&matcher=__alert_rule_uid__%%3DUID_SlackAlert2&orgId=1\n",
 			  "fallback": "[FIRING:1] SlackAlert2 (default)",
-			  "footer": "Grafana v",
+			  "footer": "Grafana",
 			  "footer_icon": "https://grafana.com/static/assets/img/fav32.png",
 			  "color": "#D63232",
 			  "ts": %s,
@@ -2596,16 +2583,17 @@ var expNonEmailNotifications = map[string][]string{
 				"grafana_folder": "default"
 			  },
 			  "annotations": {},
-			  "startsAt": "%s",
+              "startsAt": "%s",
               "values": {"A": 1},
-              "valueString": "[ var='A' labels={} value=1 ]",
-			  "endsAt": "0001-01-01T00:00:00Z",
+              "valueString": "[ var='A' labels={} type='math' value=1 ]",
+              "endsAt": "0001-01-01T00:00:00Z",
 			  "generatorURL": "http://localhost:3000/alerting/grafana/UID_WebhookAlert/view?orgId=1",
 			  "fingerprint": "15c59b0a380bd9f1",
 			  "silenceURL": "http://localhost:3000/alerting/silence/new?alertmanager=grafana&matcher=__alert_rule_uid__%%3DUID_WebhookAlert&orgId=1",
 			  "dashboardURL": "",
 			  "panelURL": "",
-			  "orgId": 1
+			  "orgId": 1,
+			  "ruleUID": "UID_WebhookAlert"
 			}
 		  ],
 		  "groupLabels": {
@@ -2770,10 +2758,11 @@ var expNonEmailNotifications = map[string][]string{
 			  "alertname": "AlertmanagerAlert",
 			  "grafana_folder": "default"
 			},
-			"annotations": {
-			  "__orgId__":"1",
+		"annotations": {
+		  "__alert_rule_namespace_uid__":"default",
+		  "__orgId__":"1",
               "__values__": "{\"A\":1}",
-              "__value_string__": "[ var='A' labels={} value=1 ]"
+              "__value_string__": "[ var='A' labels={} type='math' value=1 ]"
             },
 			"startsAt": "%s",
 			"endsAt": "0001-01-01T00:00:00Z",
@@ -2793,4 +2782,32 @@ var expNotificationErrors = map[string]string{
 // expInactiveReceivers is a set of receivers expected to be unused.
 var expInactiveReceivers = map[string]struct{}{
 	"slack_inactive_recv": {},
+}
+
+// Drop-in replacement for removed api.
+func saveAndApplyAlertmanagerConfiguration(t *testing.T, env *server.TestEnv, org int64, rawConfig string) {
+	t.Helper()
+
+	config := apimodels.PostableUserConfig{}
+	err := json.Unmarshal([]byte(rawConfig), &config)
+	require.NoError(t, err)
+
+	err = env.Server.HTTPServer.AlertNG.MultiOrgAlertmanager.Crypto.ProcessSecureSettings(context.Background(), org, config.AlertmanagerConfig.Receivers, nil)
+	require.NoError(t, err)
+
+	cfgToSave, err := json.Marshal(&config)
+	require.NoError(t, err)
+
+	err = env.Server.HTTPServer.AlertNG.Api.AlertingStore.SaveAlertmanagerConfiguration(context.Background(), &models.SaveAlertmanagerConfigurationCmd{
+		AlertmanagerConfiguration: string(cfgToSave),
+		ConfigurationVersion:      "v1",
+		Default:                   false,
+		OrgID:                     org,
+	})
+	require.NoError(t, err)
+
+	_, err = env.Server.HTTPServer.AlertNG.MultiOrgAlertmanager.ApplyConfig(context.Background(), org, &models.AlertConfiguration{
+		AlertmanagerConfiguration: string(cfgToSave),
+	})
+	require.NoError(t, err)
 }

@@ -23,7 +23,7 @@ jobs:
     outputs:
       changed: ${{ steps.detect-changes.outputs.backend }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: true # required to get more history in the changed-files action
           fetch-depth: 2
@@ -38,12 +38,13 @@ jobs:
     if: needs.detect-changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v5.5.0
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
         with:
-          go-version-file: ./go.mod
+          cache-build: 'false'
       - name: Run gofmt
         run: |
           GOFMT="$(go list -m -f '{{.Dir}}' | xargs -I{} sh -c 'test ! -f {}/.nolint && echo {}' | xargs gofmt -s -e -l 2>&1 | grep -v '/pkg/build/' || true)"
@@ -57,18 +58,19 @@ jobs:
   lint-go:
     needs: detect-changes
     if: needs.detect-changes.outputs.changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-x64-large-io
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v5.5.0
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
         with:
-          go-version-file: ./go.mod
+          cache-build: 'false'
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@1481404843c368bc19ca9406f87d6e0fc97bdcfd
+        uses: golangci/golangci-lint-action@b002b6ecfcabe6ac0e2c6cba1bcc779eb34ac51f # v9
         with:
-          version: v2.0.2
+          version: v2.9.0
           args: |
             --verbose $(go list -m -f '{{.Dir}}' | xargs -I{} sh -c 'test ! -f {}/.nolint && echo {}/...')
           install-mode: binary

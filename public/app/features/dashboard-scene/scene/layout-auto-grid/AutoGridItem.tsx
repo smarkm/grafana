@@ -13,7 +13,8 @@ import {
 } from '@grafana/scenes';
 import { OptionsPaneCategoryDescriptor } from 'app/features/dashboard/components/PanelEditor/OptionsPaneCategoryDescriptor';
 
-import { ConditionalRendering } from '../../conditional-rendering/ConditionalRendering';
+import { ConditionalRenderingGroup } from '../../conditional-rendering/group/ConditionalRenderingGroup';
+import { DashboardStateChangedEvent, RepeatsUpdatedEvent } from '../../edit-pane/shared';
 import { getCloneKey, getLocalVariableValueSet } from '../../utils/clone';
 import { getMultiVariableValues } from '../../utils/utils';
 import { scrollCanvasElementIntoView } from '../layouts-shared/scrollCanvasElementIntoView';
@@ -29,7 +30,8 @@ export interface AutoGridItemState extends SceneObjectState {
   repeatedPanels?: VizPanel[];
   variableName?: string;
   isHidden?: boolean;
-  conditionalRendering?: ConditionalRendering;
+  conditionalRendering?: ConditionalRenderingGroup;
+  repeatedConditionalRendering?: ConditionalRenderingGroup[];
 }
 
 export class AutoGridItem extends SceneObjectBase<AutoGridItemState> implements DashboardLayoutItem {
@@ -45,7 +47,7 @@ export class AutoGridItem extends SceneObjectBase<AutoGridItemState> implements 
   private _prevRepeatValues?: VariableValueSingle[];
 
   public constructor(state: AutoGridItemState) {
-    super({ ...state, conditionalRendering: state?.conditionalRendering ?? ConditionalRendering.createEmpty() });
+    super({ ...state, conditionalRendering: state?.conditionalRendering ?? ConditionalRenderingGroup.createEmpty() });
     this.addActivationHandler(() => this._activationHandler());
   }
 
@@ -53,6 +55,8 @@ export class AutoGridItem extends SceneObjectBase<AutoGridItemState> implements 
     if (this.state.variableName) {
       this.performRepeat();
     }
+
+    this._subs.add(this.subscribeToEvent(DashboardStateChangedEvent, () => this.handleEditChange()));
 
     const deactivate = this.state.conditionalRendering?.activate();
 
@@ -127,8 +131,23 @@ export class AutoGridItem extends SceneObjectBase<AutoGridItemState> implements 
       }
     }
 
-    this.setState({ repeatedPanels });
+    let repeatedConditionalRendering: ConditionalRenderingGroup[] | undefined;
+
+    if (this.state.conditionalRendering) {
+      repeatedConditionalRendering = repeatedPanels.reduce<ConditionalRenderingGroup[]>((acc, panel) => {
+        const conditionalRendering = this.state.conditionalRendering!.clone();
+        conditionalRendering.setTarget(panel);
+        acc.push(conditionalRendering);
+
+        return acc;
+      }, []);
+
+      this.state.conditionalRendering.setTarget(panelToRepeat);
+    }
+
+    this.setState({ repeatedPanels, repeatedConditionalRendering });
     this._prevRepeatValues = values;
+    this.publishEvent(new RepeatsUpdatedEvent(this), true);
   }
 
   public getPanelCount() {
@@ -137,6 +156,10 @@ export class AutoGridItem extends SceneObjectBase<AutoGridItemState> implements 
 
   public setRepeatByVariable(variableName: string | undefined) {
     const stateUpdate: Partial<AutoGridItemState> = { variableName };
+
+    if (!variableName) {
+      stateUpdate.repeatedPanels = undefined;
+    }
 
     if (this.state.body.state.$variables) {
       this.state.body.setState({ $variables: undefined });
@@ -167,16 +190,8 @@ export class AutoGridItem extends SceneObjectBase<AutoGridItemState> implements 
     };
   }
 
-  public editingStarted() {
-    if (!this.state.variableName) {
-      return;
-    }
-  }
-
-  public editingCompleted(withChanges: boolean) {
-    if (withChanges) {
-      this._prevRepeatValues = undefined;
-    }
+  public handleEditChange() {
+    this._prevRepeatValues = undefined;
 
     this.performRepeat();
   }

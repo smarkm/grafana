@@ -5,8 +5,8 @@ import { CSSProperties } from 'react';
 import { BehaviorSubject, ReplaySubject, Subject, Subscription } from 'rxjs';
 import Selecto from 'selecto';
 
-import { AppEvents, PanelData, OneClickMode } from '@grafana/data';
-import { locationService } from '@grafana/runtime';
+import { AppEvents, PanelData, OneClickMode, ActionType } from '@grafana/data';
+import { config, locationService } from '@grafana/runtime';
 import {
   ColorDimensionConfig,
   ResourceDimensionConfig,
@@ -17,7 +17,6 @@ import {
   DirectionDimensionConfig,
 } from '@grafana/schema';
 import { Portal } from '@grafana/ui';
-import { config } from 'app/core/config';
 import { DimensionContext } from 'app/features/dimensions/context';
 import {
   getColorDimensionFromData,
@@ -34,8 +33,9 @@ import { Connections2 } from 'app/plugins/panel/canvas/components/connections/Co
 import { Options } from 'app/plugins/panel/canvas/panelcfg.gen';
 import { AnchorPoint, CanvasTooltipPayload } from 'app/plugins/panel/canvas/types';
 
-import appEvents from '../../../core/app_events';
+import { appEvents } from '../../../core/app_events';
 import { CanvasPanel } from '../../../plugins/panel/canvas/CanvasPanel';
+import { isInfinityActionWithAuth } from '../../actions/utils';
 import { getDashboardSrv } from '../../dashboard/services/DashboardSrv';
 import { CanvasFrameOptions } from '../frame';
 import { DEFAULT_CANVAS_ELEMENT_CONFIG } from '../registry';
@@ -226,10 +226,6 @@ export class Scene {
     this.height = height;
     this.style = { width, height };
 
-    if (this.selecto?.getSelectedTargets().length) {
-      this.clearCurrentSelection();
-    }
-
     if (config.featureToggles.canvasPanelPanZoom) {
       this.updateConnectionsSize();
       this.fitContent(this, this.zoomToContent!);
@@ -373,10 +369,13 @@ export class Scene {
     }
   };
 
-  render() {
+  renderElement() {
     const hasDataLinks = this.tooltipPayload?.element?.getLinks && this.tooltipPayload.element.getLinks({}).length > 0;
     const hasActions =
-      this.tooltipPayload?.element?.options.actions && this.tooltipPayload.element.options.actions.length > 0;
+      this.tooltipPayload?.element?.options.actions &&
+      this.tooltipPayload.element.options.actions.filter(
+        (action) => action.type === ActionType.Fetch || isInfinityActionWithAuth(action)
+      ).length > 0;
 
     const isTooltipValid = hasDataLinks || hasActions || this.tooltipPayload?.element?.data?.field;
     const isCanvasTooltipEnabled = this.tooltipMode !== TooltipDisplayMode.None;
@@ -388,8 +387,8 @@ export class Scene {
 
     const sceneDiv = (
       <>
-        {this.connections.render()}
-        {this.root.render()}
+        {this.connections.renderElement()}
+        {this.root.renderElement()}
         {this.isEditingEnabled && (
           <Portal>
             <CanvasContextMenu

@@ -2,11 +2,12 @@
 import { isEqual } from 'lodash';
 import { memo, SyntheticEvent, useCallback, useEffect, useState } from 'react';
 
+import { QueryWithAssistantButton } from '@grafana/assistant';
 import { CoreApp, LoadingState } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
 import { t, Trans } from '@grafana/i18n';
 import { EditorHeader, EditorRows, FlexItem } from '@grafana/plugin-ui';
-import { reportInteraction } from '@grafana/runtime';
+import { config, reportInteraction } from '@grafana/runtime';
 import { Button, ConfirmModal, Space } from '@grafana/ui';
 
 import { PromQueryEditorProps } from '../../components/types';
@@ -32,6 +33,7 @@ export const PromQueryEditorSelector = memo<Props>((props) => {
     data,
     app,
     onAddQuery,
+    datasource,
     datasource: { defaultEditor },
     queries,
   } = props;
@@ -44,6 +46,10 @@ export const PromQueryEditorSelector = memo<Props>((props) => {
   const query = getQueryWithDefaults(props.query, app, defaultEditor);
   // This should be filled in from the defaults by now.
   const editorMode = query.editorMode!;
+
+  const showAssistant =
+    config.featureToggles.queryWithAssistant &&
+    (app === CoreApp.Explore || app === CoreApp.Dashboard || app === CoreApp.PanelEditor);
 
   const onEditorModeChange = useCallback(
     (newMetricEditorMode: QueryEditorMode) => {
@@ -118,16 +124,27 @@ export const PromQueryEditorSelector = memo<Props>((props) => {
         onAddQuery={onAddQuery}
       />
       <EditorHeader>
-        <Button
-          data-testid={selectors.components.QueryBuilder.queryPatterns}
-          variant="secondary"
-          size="sm"
-          onClick={handleOpenQueryPatternsModal}
-        >
-          <Trans i18nKey="grafana-prometheus.querybuilder.prom-query-editor-selector.kick-start-your-query">
-            Kick start your query
-          </Trans>
-        </Button>
+        {showAssistant && (
+          <QueryWithAssistantButton
+            currentQuery={query}
+            queries={queries ?? [query]}
+            dataSourceInstanceSettings={datasource.instanceSettings}
+            datasourceApi={null}
+            app={app}
+          />
+        )}
+        {!query.expr && (
+          <Button
+            data-testid={selectors.components.QueryBuilder.queryPatterns}
+            variant="secondary"
+            size="sm"
+            onClick={handleOpenQueryPatternsModal}
+          >
+            <Trans i18nKey="grafana-prometheus.querybuilder.prom-query-editor-selector.kick-start-your-query">
+              Kick start your query
+            </Trans>
+          </Button>
+        )}
         <div data-testid={selectors.components.DataSource.Prometheus.queryEditor.explain}>
           <QueryHeaderSwitch
             label={t('grafana-prometheus.querybuilder.prom-query-editor-selector.label-explain', 'Explain')}

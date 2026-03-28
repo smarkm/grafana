@@ -1,6 +1,10 @@
 package v0alpha1
 
 ServiceAccountSpec: {
-    title: string
-	disabled: bool
+	disabled: bool | *false
+	plugin:   string
+	role:     OrgRole
+	title:    string
 }
+
+OrgRole: "None" | "Viewer" | "Editor" | "Admin"

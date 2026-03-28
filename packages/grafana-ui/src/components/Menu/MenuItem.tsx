@@ -6,7 +6,7 @@ import { GrafanaTheme2, LinkTarget } from '@grafana/data';
 import { t } from '@grafana/i18n';
 
 import { useStyles2 } from '../../themes/ThemeContext';
-import { getFocusStyles } from '../../themes/mixins';
+import { getFocusStyles, getInternalRadius } from '../../themes/mixins';
 import { IconName } from '../../types/icon';
 import { Icon } from '../Icon/Icon';
 import { Stack } from '../Layout/Stack/Stack';
@@ -53,6 +53,8 @@ export interface MenuItemProps<T = unknown> {
   shortcut?: string;
   /** Test id for e2e tests and fullstory*/
   testId?: string;
+  /** CSS color for the icon. Ignored when `destructive` or `disabled` is true. */
+  iconColor?: string;
   /* Optional component that will be shown together with other options. Does not get passed any props. */
   component?: React.ComponentType;
 }
@@ -79,8 +81,11 @@ export const MenuItem = React.memo(
       customSubMenuContainerStyles,
       shortcut,
       testId,
+      iconColor,
     } = props;
     const styles = useStyles2(getStyles);
+    // Ignore iconColor when destructive or disabled — those states own the colors.
+    const resolvedIconColor = iconColor && !destructive && !disabled ? iconColor : undefined;
     const [isActive, setIsActive] = useState(active);
     const [isSubMenuOpen, setIsSubMenuOpen] = useState(false);
     const onMouseEnter = useCallback(() => {
@@ -126,6 +131,12 @@ export const MenuItem = React.memo(
 
     const handleKeys = (event: React.KeyboardEvent) => {
       switch (event.key) {
+        case ' ':
+          if (ItemElement === 'a' && url) {
+            event.preventDefault();
+            localRef.current?.click();
+          }
+          break;
         case 'ArrowRight':
           event.preventDefault();
           event.stopPropagation();
@@ -163,10 +174,10 @@ export const MenuItem = React.memo(
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
         onKeyDown={handleKeys}
-        // If there's no URL, then set either the role from the props, or fallback to menuitem
-        // If there IS a URL, then use the role from props - which will result in this either being a
-        // link (default role of an anchor), or whatever the user of this component specified
-        role={!url ? role || 'menuitem' : role}
+        // Default to menuitem for all items (links and buttons) so screen readers announce
+        // position correctly (e.g. "X of Y") and the menu has proper ARIA semantics.
+        // Callers can override via the role prop.
+        role={role ?? 'menuitem'}
         data-role="menuitem" // used to identify menuitem in Menu.tsx
         ref={localRef}
         data-testid={testId}
@@ -176,8 +187,14 @@ export const MenuItem = React.memo(
         {...disabledProps}
       >
         <Stack direction="row" justifyContent="flex-start" alignItems="center">
-          {icon && <Icon name={icon} className={styles.icon} aria-hidden />}
-          <span className={styles.ellipsis}>{label}</span>
+          {icon && (
+            <Icon
+              name={icon}
+              className={cx(styles.icon, resolvedIconColor && css({ color: resolvedIconColor }))}
+              aria-hidden
+            />
+          )}
+          <span className={cx(styles.ellipsis, styles.label)}>{label}</span>
           <div className={cx(styles.rightWrapper, { [styles.withShortcut]: hasShortcut })}>
             {hasShortcut && (
               <div className={styles.shortcut}>
@@ -187,6 +204,7 @@ export const MenuItem = React.memo(
             )}
             {hasSubMenu && (
               <SubMenu
+                parentItemRef={localRef}
                 items={childItems}
                 isOpen={isSubMenuOpen}
                 close={closeSubMenu}
@@ -213,19 +231,21 @@ export const MenuItem = React.memo(
 MenuItem.displayName = 'MenuItem';
 
 const getStyles = (theme: GrafanaTheme2) => {
+  const menuPadding = theme.components.menu.padding * theme.spacing.gridSize;
+
   return {
     item: css({
       background: 'none',
       cursor: 'pointer',
       whiteSpace: 'nowrap',
-      color: theme.colors.text.primary,
+      color: theme.colors.text.secondary,
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'stretch',
       justifyContent: 'center',
       padding: theme.spacing(0.5, 1.5),
       minHeight: theme.spacing(4),
-      borderRadius: theme.shape.radius.default,
+      borderRadius: getInternalRadius(theme, menuPadding, { parentBorderWidth: 0 }),
       margin: 0,
       border: 'none',
       width: '100%',
@@ -238,6 +258,9 @@ const getStyles = (theme: GrafanaTheme2) => {
       },
 
       '&:focus-visible': getFocusStyles(theme),
+    }),
+    label: css({
+      color: theme.colors.text.primary,
     }),
     active: css({
       background: theme.colors.action.hover,
@@ -269,7 +292,6 @@ const getStyles = (theme: GrafanaTheme2) => {
     }),
     icon: css({
       opacity: 0.7,
-      color: theme.colors.text.secondary,
     }),
     rightWrapper: css({
       display: 'flex',
@@ -284,12 +306,9 @@ const getStyles = (theme: GrafanaTheme2) => {
       alignItems: 'center',
       gap: theme.spacing(1),
       marginLeft: theme.spacing(2),
-      color: theme.colors.text.secondary,
-      opacity: 0.7,
     }),
     description: css({
       ...theme.typography.bodySmall,
-      color: theme.colors.text.secondary,
       textAlign: 'start',
     }),
     descriptionWithIcon: css({

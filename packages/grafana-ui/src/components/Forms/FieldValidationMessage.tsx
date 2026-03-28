@@ -12,6 +12,11 @@ export interface FieldValidationMessageProps {
   horizontal?: boolean;
 }
 
+/**
+ * Component for displaying a validation error message under an element.
+ *
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/forms-fieldvalidationmessage--docs
+ */
 export const FieldValidationMessage = ({
   children,
   horizontal,
@@ -22,7 +27,7 @@ export const FieldValidationMessage = ({
 
   return (
     <div role="alert" className={cssName}>
-      <Icon className={styles.fieldValidationMessageIcon} name="exclamation-triangle" />
+      <Icon className={styles.fieldValidationMessageIcon} name="exclamation-circle" />
       {children}
     </div>
   );

@@ -1,8 +1,9 @@
 import { PluginType, patchArrayVectorProrotypeMethods } from '@grafana/data';
 import { config } from '@grafana/runtime';
+import { getAppPluginMetas, getPanelPluginMetas } from '@grafana/runtime/internal';
 
 import { transformPluginSourceForCDN } from '../cdn/utils';
-import { resolveWithCache } from '../loader/cache';
+import { resolvePluginUrlWithCache } from '../loader/pluginInfoCache';
 import { isHostedOnCDN, resolveModulePath } from '../loader/utils';
 
 import { SandboxEnvironment, SandboxPluginMeta } from './types';
@@ -49,7 +50,7 @@ export async function loadScriptIntoSandbox(url: string, sandboxEnv: SandboxEnvi
 
 export async function getPluginCode(meta: SandboxPluginMeta): Promise<string> {
   if (isHostedOnCDN(meta.module)) {
-    // Load plugin from CDN, no need for "resolveWithCache" as CDN URLs already include the version
+    // Load plugin from CDN, no need for "resolvePluginUrlWithCache" as CDN URLs already include the version
     const url = meta.module;
     const response = await fetch(url);
 
@@ -67,9 +68,9 @@ export async function getPluginCode(meta: SandboxPluginMeta): Promise<string> {
     return pluginCode;
   } else {
     let modulePath = resolveModulePath(meta.module);
-    // resolveWithCache will append a query parameter with its version
+    // resolvePluginUrlWithCache will append a query parameter with its version
     // to ensure correct cached version is served for local plugins
-    const pluginCodeUrl = resolveWithCache(modulePath);
+    const pluginCodeUrl = resolvePluginUrlWithCache(modulePath);
     const response = await fetch(pluginCodeUrl);
 
     let pluginCode = await response.text();
@@ -121,7 +122,7 @@ export function patchSandboxEnvironmentPrototype(sandboxEnvironment: SandboxEnvi
   );
 }
 
-export function getPluginLoadData(pluginId: string): SandboxPluginMeta {
+export async function getPluginLoadData(pluginId: string): Promise<SandboxPluginMeta> {
   // find it in datasources
   for (const datasource of Object.values(config.datasources)) {
     if (datasource.type === pluginId) {
@@ -130,7 +131,8 @@ export function getPluginLoadData(pluginId: string): SandboxPluginMeta {
   }
 
   //find it in panels
-  for (const panel of Object.values(config.panels)) {
+  const panels = await getPanelPluginMetas();
+  for (const panel of panels) {
     if (panel.id === pluginId) {
       return panel;
     }
@@ -138,7 +140,8 @@ export function getPluginLoadData(pluginId: string): SandboxPluginMeta {
 
   //find it in apps
   //the information inside the apps object is more limited
-  for (const app of Object.values(config.apps)) {
+  const apps = await getAppPluginMetas();
+  for (const app of apps) {
     if (app.id === pluginId) {
       return {
         id: pluginId,

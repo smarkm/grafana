@@ -3,11 +3,11 @@ import path, { dirname } from 'path';
 
 import { PluginOptions } from '@grafana/plugin-e2e';
 
-const testDirRoot = 'e2e-playwright';
+export const testDirRoot = 'e2e-playwright';
 const pluginDirRoot = path.join(testDirRoot, 'plugin-e2e');
-const DEFAULT_URL = 'http://localhost:3001';
+export const DEFAULT_URL = 'http://localhost:3001';
 
-function withAuth(project: Project): Project {
+export function withAuth(project: Project): Project {
   project.dependencies ??= [];
   project.use ??= {};
 
@@ -20,14 +20,14 @@ function withAuth(project: Project): Project {
   return project;
 }
 
-export default defineConfig<PluginOptions>({
+export const baseConfig: PlaywrightTestConfig<PluginOptions, {}> = {
   fullyParallel: true,
   /* Retry on CI only */
-  retries: process.env.CI ? 2 : 0,
-  /* Opt out of parallel tests on CI. */
-  workers: process.env.CI ? 1 : undefined,
+  retries: process.env.CI ? 1 : 0,
+  workers: process.env.CI ? 4 : undefined,
   reporter: [
     ['html'], // pretty
+    ['./e2e-playwright/utils/axe-a11y/reporter.ts'], // accessibility reporter
   ],
   expect: {
     timeout: 10_000,
@@ -44,6 +44,10 @@ export default defineConfig<PluginOptions>({
     permissions: ['clipboard-read', 'clipboard-write'],
     provisioningRootDir: path.join(process.cwd(), process.env.PROV_DIR ?? 'conf/provisioning'),
   },
+};
+
+export default defineConfig<PluginOptions>({
+  ...baseConfig,
   ...(!process.env.GRAFANA_URL && {
     webServer: {
       command: 'yarn e2e:plugin:build && ./e2e-playwright/start-server',
@@ -176,8 +180,36 @@ export default defineConfig<PluginOptions>({
       testDir: path.join(testDirRoot, '/cloud-plugins-suite'),
     }),
     withAuth({
+      name: 'alerting',
+      testDir: path.join(testDirRoot, '/alerting-suite'),
+    }),
+    withAuth({
       name: 'dashboard-new-layouts',
       testDir: path.join(testDirRoot, '/dashboard-new-layouts'),
+    }),
+    // Setup project for dashboard CUJS tests
+    withAuth({
+      name: 'dashboard-cujs-setup',
+      testDir: path.join(testDirRoot, '/dashboard-cujs'),
+      testMatch: ['global-setup.spec.ts'],
+    }),
+    // Main dashboard CUJS tests
+    withAuth({
+      name: 'dashboard-cujs',
+      testDir: path.join(testDirRoot, '/dashboard-cujs'),
+      testIgnore: ['global-setup.spec.ts', 'global-teardown.spec.ts'],
+      dependencies: ['dashboard-cujs-setup'],
+    }),
+    // Teardown project for dashboard CUJS tests
+    withAuth({
+      name: 'dashboard-cujs-teardown',
+      testDir: path.join(testDirRoot, '/dashboard-cujs'),
+      testMatch: ['global-teardown.spec.ts'],
+      dependencies: ['dashboard-cujs'],
+    }),
+    withAuth({
+      name: 'grafana-e2etest-panel',
+      testDir: path.join(testDirRoot, '/test-plugins/grafana-test-panel'),
     }),
   ],
 });

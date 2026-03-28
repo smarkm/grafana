@@ -7,11 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/admission"
 
 	dashv0 "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v0alpha1"
-	dashv1 "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v1beta1"
+	dashv1 "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v1"
 	dashv2alpha1 "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1"
 	dashv2beta1 "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2beta1"
 	"github.com/grafana/grafana/apps/dashboard/pkg/migration"
@@ -23,7 +22,7 @@ import (
 )
 
 func TestDashboardAPIBuilder_Mutate(t *testing.T) {
-	migration.Initialize(testutil.GetTestDataSourceProvider(), testutil.GetTestPanelProvider())
+	migration.Initialize(testutil.NewDataSourceProvider(testutil.StandardTestConfig), testutil.NewLibraryElementProvider(), migration.DefaultCacheTTL)
 	tests := []struct {
 		name                string
 		inputObj            runtime.Object
@@ -180,10 +179,10 @@ func TestDashboardAPIBuilder_Mutate(t *testing.T) {
 			err := b.Mutate(context.Background(), admission.NewAttributesRecord(
 				tt.inputObj,
 				nil,
-				schema.GroupVersionKind{},
+				dashv1.DashboardResourceInfo.GroupVersionKind(),
 				"",
 				"test",
-				schema.GroupVersionResource{},
+				dashv1.DashboardResourceInfo.GroupVersionResource(),
 				"",
 				tt.operation,
 				operationOptions,
