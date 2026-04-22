@@ -440,6 +440,16 @@ func (hs *HTTPServer) Index(c *models.ReqContext) {
 	c.HTML(200, "index", data)
 }
 
+// SendResetEmail is used for sending reset password email by customized
+func (hs *HTTPServer) SendResetEmail(c *models.ReqContext) {
+	data, err := hs.setIndexViewData(c)
+	if err != nil {
+		c.Handle(500, "Failed to get settings", err)
+		return
+	}
+	c.HTML(200, "sendResetEmail", data)
+}
+
 func (hs *HTTPServer) NotFoundHandler(c *models.ReqContext) {
 	if c.IsApiRequest() {
 		c.JsonApiErr(404, "Not found", nil)

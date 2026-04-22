@@ -26,7 +26,7 @@ func (hs *HTTPServer) registerRoutes() {
 
 	// not logged in views
 	r.Get("/logout", hs.Logout)
-	r.Post("/login", quota("session"), bind(dtos.LoginCommand{}), Wrap(hs.LoginPost))
+	//r.Post("/login", quota("session"), bind(dtos.LoginCommand{}), Wrap(hs.LoginPost))
 	r.Get("/switchUser/:userId", reqSignedIn, Wrap(hs.SwitchUser))
 	r.Post("/loginOTP", quota("session"), bind(dtos.LoginCommand{}), Wrap(hs.LoginPostWithOTP))
 	//r.Get("/sendOTP", quota("session"), routing.Wrap(hs.SendOTP))
@@ -102,7 +102,8 @@ func (hs *HTTPServer) registerRoutes() {
 	r.Post("/api/user/invite/complete", bind(dtos.CompleteInviteForm{}), Wrap(hs.CompleteInvite))
 
 	// reset password
-	r.Get("/user/password/send-reset-email", hs.Index)
+	//r.Get("/user/password/send-reset-email", hs.Index)
+	r.Get("/user/password/send-reset-email/v1", hs.SendResetEmail)
 	r.Get("/user/password/reset", hs.Index)
 
 	r.Post("/api/user/password/send-reset-email", bind(dtos.SendResetPasswordEmailForm{}), Wrap(SendResetPasswordEmail))
