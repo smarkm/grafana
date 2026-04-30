@@ -73,7 +73,6 @@ type Alertmanager interface {
 
 	// Receivers
 	GetReceivers(ctx context.Context) ([]alertingModels.ReceiverStatus, error)
-	TestReceivers(ctx context.Context, c apimodels.TestReceiversConfigBodyParams) (*alertingNotify.TestReceiversResult, int, error)
 	TestIntegration(ctx context.Context, receiverName string, integrationConfig models.Integration, alert alertingModels.TestReceiversConfigAlertParams) (alertingModels.IntegrationStatus, error)
 	TestTemplate(ctx context.Context, c apimodels.TestTemplatesConfigBodyParams) (*TestTemplatesResults, error)
 
@@ -122,6 +121,7 @@ type MultiOrgAlertmanager struct {
 	ns      notifications.Service
 
 	receiverResourcePermissions ac.ReceiverPermissionsService
+	routesResourcePermissions   ac.RoutePermissionsService
 }
 
 type OrgAlertmanagerFactory func(ctx context.Context, orgID int64) (Alertmanager, error)
@@ -144,10 +144,12 @@ func NewMultiOrgAlertmanager(
 	m *metrics.MultiOrgAlertmanager,
 	ns notifications.Service,
 	receiverResourcePermissions ac.ReceiverPermissionsService,
+	routesResourcePermissions ac.RoutePermissionsService,
 	l log.Logger,
 	s secrets.Service,
 	featureManager featuremgmt.FeatureToggles,
 	notificationHistorian nfstatus.NotificationHistorian,
+	skipClustering bool,
 	opts ...Option,
 ) (*MultiOrgAlertmanager, error) {
 	moa := &MultiOrgAlertmanager{
@@ -163,13 +165,18 @@ func NewMultiOrgAlertmanager(
 		kvStore:                     kvStore,
 		decryptFn:                   decryptFn,
 		receiverResourcePermissions: receiverResourcePermissions,
+		routesResourcePermissions:   routesResourcePermissions,
 		metrics:                     m,
 		ns:                          ns,
 		peer:                        &NilPeer{},
 	}
 
-	if err := moa.setupClustering(cfg); err != nil {
-		return nil, err
+	if skipClustering {
+		moa.logger.Info("Not setting up clustering for the multi-org Alertmanager")
+	} else {
+		if err := moa.setupClustering(cfg); err != nil {
+			return nil, err
+		}
 	}
 
 	moa.initAlertBroadcast()
@@ -401,6 +408,12 @@ func (moa *MultiOrgAlertmanager) SyncAlertmanagersForOrgs(ctx context.Context, o
 				moa.logger.Error("Failed to apply the default Alertmanager configuration", "org", orgID)
 				continue
 			}
+			// init the permissions for the basic role
+			moa.logger.Debug("Setting default permissions for the basic roles")
+			if err := moa.routesResourcePermissions.SetDefaultPermissions(ctx, orgID, nil, models.DefaultRoutingTreeName); err != nil {
+				moa.logger.Error("Failed to set default permissions for the basic roles", "org", orgID, "error", err)
+			}
+			// TODO here we need to do the same for the default receiver.
 			moa.alertmanagers[orgID] = alertmanager
 			continue
 		}
@@ -641,10 +654,9 @@ func (moa *MultiOrgAlertmanager) DeleteSilence(ctx context.Context, orgID int64,
 // the state has persisted. This can happen, for example, in a rolling deployment scenario.
 func (moa *MultiOrgAlertmanager) updateSilenceState(ctx context.Context, orgAM Alertmanager, orgID int64) error {
 	// Collect the internal silence state from the AM.
-	// TODO: Currently, we rely on the AM itself for the persisted silence state representation. Preferably, we would
-	//  define the state ourselves and persist it in a format that is easy to guarantee consistency for writes to
-	//  individual silences. In addition to the consistency benefits, this would also allow us to avoid the need for
-	//  a network request to the AM to get the state in the case of remote alertmanagers.
+	// TODO: Currently, we rely on the AM itself for the persisted silence state representation.
+	// Preferably, we would define the state ourselves and persist it in a format that is easy to
+	// guarantee consistency for writes to individual silences.
 	silences, err := orgAM.SilenceState(ctx)
 	if err != nil {
 		return err

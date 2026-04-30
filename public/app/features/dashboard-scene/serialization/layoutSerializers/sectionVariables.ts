@@ -1,6 +1,6 @@
-import { getFeatureFlagClient } from '@grafana/runtime/internal';
-import { SceneVariables, SceneVariableSet } from '@grafana/scenes';
-import { VariableKind } from '@grafana/schema/apis/dashboard.grafana.app/v2';
+import { FlagKeys, getFeatureFlagClient } from '@grafana/runtime/internal';
+import { type SceneVariables, SceneVariableSet } from '@grafana/scenes';
+import { type VariableKind } from '@grafana/schema/apis/dashboard.grafana.app/v2';
 
 import { sceneVariablesSetToSchemaV2Variables } from '../sceneVariablesSetToVariables';
 import { createSceneVariableFromVariableModel } from '../transformSaveModelSchemaV2ToScene';
@@ -15,7 +15,7 @@ export function serializeSectionVariables(variableSet?: SceneVariables): Variabl
 }
 
 export function deserializeSectionVariables(variables?: VariableKind[]): SceneVariableSet | undefined {
-  const sectionVariablesEnabled = getFeatureFlagClient().getBooleanValue('dashboardSectionVariables', false);
+  const sectionVariablesEnabled = getFeatureFlagClient().getBooleanValue(FlagKeys.DashboardSectionVariables, false);
   if (!variables || variables.length === 0 || !sectionVariablesEnabled) {
     return undefined;
   }

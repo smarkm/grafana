@@ -1,6 +1,6 @@
 import { chain } from 'lodash';
 
-import { DataSourceInstanceSettings, getDataSourceRef, SelectableValue } from '@grafana/data';
+import { type DataSourceInstanceSettings, getDataSourceRef, type SelectableValue } from '@grafana/data';
 import { t } from '@grafana/i18n';
 import { config, getDataSourceSrv } from '@grafana/runtime';
 import {
@@ -11,17 +11,17 @@ import {
   TextBoxVariable,
   QueryVariable,
   GroupByVariable,
-  SceneVariable,
-  MultiValueVariable,
+  type SceneVariable,
+  type MultiValueVariable,
   sceneUtils,
-  SceneObject,
+  type SceneObject,
   AdHocFiltersVariable,
-  SceneVariableState,
+  type SceneVariableState,
   SceneVariableSet,
   SwitchVariable,
 } from '@grafana/scenes';
-import { DataSourceRef, VariableHide, VariableType } from '@grafana/schema';
-import { OptionsPaneItemDescriptor } from 'app/features/dashboard/components/PanelEditor/OptionsPaneItemDescriptor';
+import { type DataSourceRef, VariableHide, type VariableType } from '@grafana/schema';
+import { type OptionsPaneItemDescriptor } from 'app/features/dashboard/components/PanelEditor/OptionsPaneItemDescriptor';
 
 import { getIntervalsQueryFromNewIntervalModel } from '../../utils/utils';
 
@@ -182,6 +182,7 @@ export function getVariableEditor(type: EditableVariableType) {
 export interface CommonVariableProperties {
   name: string;
   label?: string;
+  key?: string;
 }
 
 function getDefaultDatasourceRef(): DataSourceRef | undefined {
@@ -210,7 +211,6 @@ export function getVariableScene(type: EditableVariableType, initialState: Commo
     case 'adhoc':
       return new AdHocFiltersVariable({
         ...initialState,
-        layout: 'combobox',
       });
     case 'groupby':
       return new GroupByVariable(initialState);
@@ -224,6 +224,10 @@ export function getVariableScene(type: EditableVariableType, initialState: Commo
 export function getVariableDefault(variables: Array<SceneVariable<SceneVariableState>>) {
   const nextVariableIdName = getNextAvailableId('query', variables);
   return getVariableScene('query', { name: nextVariableIdName });
+}
+
+export function getVariableNamePrefix(type: EditableVariableType): string {
+  return type === 'adhoc' ? 'filter' : type;
 }
 
 export function getNextAvailableId(

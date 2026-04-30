@@ -2,7 +2,6 @@ package iam
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	authlib "github.com/grafana/authlib/types"
@@ -27,6 +26,7 @@ func newIAMAuthorizer(
 	globalRoleApiInstaller GlobalRoleApiInstaller,
 	teamLbacApiInstaller TeamLBACApiInstaller,
 	externalGroupMappingApiInstaller ExternalGroupMappingApiInstaller,
+	roleBindingsApiInstaller RoleBindingApiInstaller,
 ) authorizer.Authorizer {
 	resourceAuthorizer := make(map[string]authorizer.Authorizer)
 
@@ -64,12 +64,28 @@ func newIAMAuthorizer(
 	legacyAuthorizer := gfauthorizer.NewResourceAuthorizer(legacyAccessClient)
 	resourceAuthorizer["display"] = legacyAuthorizer
 
+	// Temporary security fix: Block Watch on ResourcePermissions until proper filtering is implemented
+	blockWatchAuthorizer := authorizer.AuthorizerFunc(func(
+		ctx context.Context, attr authorizer.Attributes,
+	) (authorized authorizer.Decision, reason string, err error) {
+		if !attr.IsResourceRequest() {
+			return authorizer.DecisionNoOpinion, "", nil
+		}
+
+		// Block Watch requests
+		if attr.GetVerb() == "watch" {
+			return authorizer.DecisionDeny, "watch operation is disabled for ResourcePermissions", nil
+		}
+
+		// Allow all other operations (handled by storage layer authorization)
+		return authorizer.DecisionAllow, "", nil
+	})
+
 	// Access specific resources
-	authorizer := gfauthorizer.NewResourceAuthorizer(accessClient)
 	resourceAuthorizer[iamv0.RoleInfo.GetName()] = roleApiInstaller.GetAuthorizer()
 	resourceAuthorizer[iamv0.TeamLBACRuleInfo.GetName()] = teamLbacApiInstaller.GetAuthorizer()
-	resourceAuthorizer[iamv0.ResourcePermissionInfo.GetName()] = allowAuthorizer // Handled by the backend wrapper
-	resourceAuthorizer[iamv0.RoleBindingInfo.GetName()] = authorizer
+	resourceAuthorizer[iamv0.ResourcePermissionInfo.GetName()] = blockWatchAuthorizer // Block Watch, allow others (storage-layer handles authorization)
+	resourceAuthorizer[iamv0.RoleBindingInfo.GetName()] = roleBindingsApiInstaller.GetAuthorizer()
 	resourceAuthorizer[iamv0.ServiceAccountResourceInfo.GetName()] = newServiceAccountAuthorizer(accessClient)
 	resourceAuthorizer[iamv0.UserResourceInfo.GetName()] = newUserAuthorizer(accessClient)
 	resourceAuthorizer[iamv0.ExternalGroupMappingResourceInfo.GetName()] = externalGroupMappingApiInstaller.GetAuthorizer()
@@ -98,43 +114,6 @@ func (s *iamAuthorizer) Authorize(ctx context.Context, attr authorizer.Attribute
 	return authz.Authorize(ctx, attr)
 }
 
-// subresourceCheck is a function that performs authorization check for a specific subresource.
-// It receives the context, identity, and attributes, and returns the authorization decision.
-type subresourceCheck func(ctx context.Context, ident authlib.AuthInfo, attr authorizer.Attributes) (authorizer.Decision, string, error)
-
-// newAuthorizerWithCustomSubCheck creates an authorizer that handles specific subresources
-// with custom permission checks, delegating to the standard ResourceAuthorizer for direct
-// resource access (no subresource). Unregistered subresources are denied so that authorization
-// for every subresource must be explicitly specified.
-func newAuthorizerWithCustomSubCheck(
-	accessClient authlib.AccessClient,
-	checks map[string]subresourceCheck,
-) authorizer.Authorizer {
-	delegate := gfauthorizer.NewResourceAuthorizer(accessClient)
-	return authorizer.AuthorizerFunc(func(ctx context.Context, attr authorizer.Attributes) (authorizer.Decision, string, error) {
-		if !attr.IsResourceRequest() {
-			return authorizer.DecisionNoOpinion, "", nil
-		}
-
-		sub := attr.GetSubresource()
-		if sub == "" {
-			return delegate.Authorize(ctx, attr)
-		}
-
-		check, ok := checks[sub]
-		if !ok {
-			return authorizer.DecisionDeny, "", fmt.Errorf("no authorizer for subresource %q", sub)
-		}
-
-		ident, ok := authlib.AuthInfoFrom(ctx)
-		if !ok {
-			return authorizer.DecisionDeny, "", errors.New("no identity found")
-		}
-
-		return check(ctx, ident, attr)
-	})
-}
-
 // newTeamAuthorizer creates an authorizer for teams that handles the "members" and "groups" subresources
 // with a get_permissions check on the parent team resource.
 func newTeamAuthorizer(accessClient authlib.AccessClient) authorizer.Authorizer {
@@ -154,7 +133,7 @@ func newTeamAuthorizer(accessClient authlib.AccessClient) authorizer.Authorizer 
 		}
 		return authorizer.DecisionAllow, "", nil
 	}
-	return newAuthorizerWithCustomSubCheck(accessClient, map[string]subresourceCheck{
+	return gfauthorizer.NewResourceAuthorizerWithSubresourceHandlers(accessClient, map[string]gfauthorizer.SubresourceCheck{
 		"members": check,
 		"groups":  check,
 	})
@@ -164,7 +143,7 @@ func newTeamAuthorizer(accessClient authlib.AccessClient) authorizer.Authorizer 
 // "teams" is read-only (Connecter/GET), so it checks user get.
 // "status" supports both GET and PUT, so the check verb mirrors the request verb.
 func newUserAuthorizer(accessClient authlib.AccessClient) authorizer.Authorizer {
-	return newAuthorizerWithCustomSubCheck(accessClient, map[string]subresourceCheck{
+	return gfauthorizer.NewResourceAuthorizerWithSubresourceHandlers(accessClient, map[string]gfauthorizer.SubresourceCheck{
 		"teams": func(ctx context.Context, ident authlib.AuthInfo, attr authorizer.Attributes) (authorizer.Decision, string, error) {
 			res, err := accessClient.Check(ctx, ident, authlib.CheckRequest{
 				Verb:      utils.VerbGet,
@@ -204,14 +183,24 @@ func newUserAuthorizer(accessClient authlib.AccessClient) authorizer.Authorizer 
 	})
 }
 
-// newServiceAccountAuthorizer creates an authorizer for service accounts that handles the "tokens" subresource
-// with a get check on the parent service account resource.
-// This follows the legacy permission pattern where viewing tokens requires serviceaccounts:read on serviceaccounts:id:<id>.
+// newServiceAccountAuthorizer creates an authorizer for service accounts that handles the "tokens" subresource.
+// Token operations are mapped to align with the legacy API permissions:
+//   - GET  (get/list) → serviceaccounts:read  (verb "get")
+//   - POST (create)   → serviceaccounts:write  (verb "update")
+//   - DELETE           → serviceaccounts:write  (verb "update")
 func newServiceAccountAuthorizer(accessClient authlib.AccessClient) authorizer.Authorizer {
-	return newAuthorizerWithCustomSubCheck(accessClient, map[string]subresourceCheck{
+	return gfauthorizer.NewResourceAuthorizerWithSubresourceHandlers(accessClient, map[string]gfauthorizer.SubresourceCheck{
 		"tokens": func(ctx context.Context, ident authlib.AuthInfo, attr authorizer.Attributes) (authorizer.Decision, string, error) {
+			// Map verbs to match the legacy API: read operations use "get",
+			// write operations (create/delete) use "update" → serviceaccounts:write.
+			verb := attr.GetVerb()
+			switch verb {
+			case utils.VerbCreate, utils.VerbDelete:
+				verb = utils.VerbUpdate
+			}
+
 			res, err := accessClient.Check(ctx, ident, authlib.CheckRequest{
-				Verb:      utils.VerbGet,
+				Verb:      verb,
 				Group:     attr.GetAPIGroup(),
 				Resource:  attr.GetResource(),
 				Namespace: attr.GetNamespace(),
@@ -221,7 +210,7 @@ func newServiceAccountAuthorizer(accessClient authlib.AccessClient) authorizer.A
 				return authorizer.DecisionDeny, "", err
 			}
 			if !res.Allowed {
-				return authorizer.DecisionDeny, "requires serviceaccount get", nil
+				return authorizer.DecisionDeny, fmt.Sprintf("requires serviceaccount %s", verb), nil
 			}
 			return authorizer.DecisionAllow, "", nil
 		},
