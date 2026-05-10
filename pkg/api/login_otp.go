@@ -96,7 +96,7 @@ func (hs *HTTPServer) LoginPostWithOTP(c *models.ReqContext, cmd dtos.LoginComma
 	getUser := models.GetUserByLoginQuery{LoginOrEmail: cmd.User}
 	err2 := bus.Dispatch(&getUser)
 	if err2 != nil {
-		resp = Error(http.StatusUnauthorized, "Failed to get user", nil)
+		resp = Error(http.StatusUnauthorized, "Invalid username or password", nil)
 		hs.log.Error("Failed to get user", "error", err2)
 		return resp
 	} else {
@@ -163,7 +163,7 @@ func (hs *HTTPServer) LoginPostWithOTP(c *models.ReqContext, cmd dtos.LoginComma
 			}
 		}
 
-		resp = Success("/public/otp.html?code=" + code)
+		resp = Success("public/otp.html?code=" + code)
 		return resp
 	}
 	user = authQuery.User
