@@ -126,6 +126,11 @@ func (hs *HTTPServer) LoginPostWithOTP(c *models.ReqContext, cmd dtos.LoginComma
 			}
 			resp = Error(401, setting.LoginTooManyAttempedTips, errors.New("user:"+cmd.User))
 		} else {
+			if errors.Is(err, login.ErrUserDisabledWithWrongPasswd) {
+				hs.log.Warn("User is disabled", "user", cmd.User)
+				resp = Error(401, "Invalid username or password", err)
+				return resp
+			}
 			if errors.Is(err, login.ErrUserDisabled) {
 				hs.log.Warn("User is disabled", "user", cmd.User)
 				resp = Error(401, "User is disabled", err)
