@@ -213,11 +213,42 @@ func (s *Service) Login(ctx context.Context, client string, r *authn.Request) (i
 	))
 	defer span.End()
 
+	id, err = s.AuthenticateClient(ctx, client, r)
+	if err != nil {
+		s.metrics.failedLogin.WithLabelValues(client).Inc()
+		for _, hook := range s.postLoginHooks.items {
+			hook.v(ctx, id, r, err)
+		}
+		return nil, err
+	}
+
+	return s.CreateLoginSession(ctx, id, r)
+}
+
+func (s *Service) AuthenticateClient(ctx context.Context, client string, r *authn.Request) (*authn.Identity, error) {
+	ctx, span := s.tracer.Start(ctx, "authn.AuthenticateClient", trace.WithAttributes(
+		attribute.String(attributeKeyClient, client),
+	))
+	defer span.End()
+
 	orgID, err := s.orgIDFromRequest(r)
 	if err != nil {
 		return nil, err
 	}
 	r.OrgID = orgID
+
+	c, ok := s.clients[client]
+	if !ok {
+		return nil, authn.ErrClientNotConfigured.Errorf("client not configured: %s", client)
+	}
+
+	r.SetMeta(authn.MetaKeyIsLogin, "true")
+	return s.authenticate(ctx, c, r)
+}
+
+func (s *Service) CreateLoginSession(ctx context.Context, identity *authn.Identity, r *authn.Request) (id *authn.Identity, err error) {
+	ctx, span := s.tracer.Start(ctx, "authn.CreateLoginSession")
+	defer span.End()
 
 	defer func() {
 		for _, hook := range s.postLoginHooks.items {
@@ -225,19 +256,15 @@ func (s *Service) Login(ctx context.Context, client string, r *authn.Request) (i
 		}
 	}()
 
-	c, ok := s.clients[client]
-	if !ok {
-		s.metrics.failedLogin.WithLabelValues(client).Inc()
-		return nil, authn.ErrClientNotConfigured.Errorf("client not configured: %s", client)
+	client := identity.AuthenticatedBy
+	if client == "" {
+		client = "unknown"
 	}
 
-	r.SetMeta(authn.MetaKeyIsLogin, "true")
-	id, err = s.authenticate(ctx, c, r)
-	if err != nil {
-		s.metrics.failedLogin.WithLabelValues(client).Inc()
-		return nil, err
-	}
+	return s.createLoginSession(ctx, client, r, identity)
+}
 
+func (s *Service) createLoginSession(ctx context.Context, client string, r *authn.Request, id *authn.Identity) (*authn.Identity, error) {
 	// Login is only supported for users
 	if !id.IsIdentityType(types.TypeUser) {
 		s.metrics.failedLogin.WithLabelValues(client).Inc()
@@ -252,7 +279,7 @@ func (s *Service) Login(ctx context.Context, client string, r *authn.Request) (i
 	addr := web.RemoteAddr(r.HTTPRequest)
 	ip, err := network.GetIPFromAddress(addr)
 	if err != nil {
-		s.log.FromContext(ctx).Debug("Failed to parse ip from address", "client", c.Name(), "id", id.ID, "addr", addr, "error", err)
+		s.log.FromContext(ctx).Debug("Failed to parse ip from address", "client", client, "id", id.ID, "addr", addr, "error", err)
 	}
 
 	externalSession := s.resolveExternalSessionFromIdentity(ctx, id, userID)

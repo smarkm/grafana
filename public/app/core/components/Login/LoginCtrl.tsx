@@ -32,6 +32,10 @@ export interface PasswordlessConfirmationFormModel {
   name?: string;
 }
 
+export interface MFAOTPVerifyFormModel {
+  otpCode: string;
+}
+
 interface Props {
   resetCode?: string;
 
@@ -43,7 +47,10 @@ interface Props {
     login: (data: FormModel) => void;
     passwordlessStart: (data: PasswordlessFormModel) => void;
     passwordlessConfirm: (data: PasswordlessConfirmationFormModel) => void;
+    mfaOtpVerify: (data: MFAOTPVerifyFormModel) => void;
     showPasswordlessConfirmation: boolean;
+    showMfaOtp: boolean;
+    mfaOtpEmail?: string;
     disableLoginForm: boolean;
     disableUserSignUp: boolean;
     isOauthEnabled: boolean;
@@ -63,6 +70,9 @@ export const LoginCtrl = memo(({ resetCode, children }: Props) => {
   const [loginErrorMessage, setLoginErrorMessage] = useState<string | undefined>(
     getBootDataErrMessage(config.loginError)
   );
+  const [showMfaOtp, setShowMfaOtp] = useState(false);
+  const [mfaOtpToken, setMfaOtpToken] = useState<string | undefined>();
+  const [mfaOtpEmail, setMfaOtpEmail] = useState<string | undefined>();
 
   const toGrafana = useCallback(() => {
     if (config.featureToggles.useSessionStorageForRedirection) {
@@ -127,6 +137,18 @@ export const LoginCtrl = memo(({ resetCode, children }: Props) => {
         .post<LoginDTO>('/login', formModel, { showErrorAlert: false })
         .then((result) => {
           setResult(result);
+          if (result.otpRequired) {
+            if (!result.otpToken) {
+              setIsLoggingIn(false);
+              setLoginErrorMessage(t('login.error.unknown', 'Unknown error occurred'));
+              return;
+            }
+            setMfaOtpToken(result.otpToken);
+            setMfaOtpEmail(result.email);
+            setShowMfaOtp(true);
+            setIsLoggingIn(false);
+            return;
+          }
           if (formModel.password !== 'admin' || config.ldapEnabled || config.authProxyEnabled) {
             toGrafana();
             return;
@@ -181,6 +203,35 @@ export const LoginCtrl = memo(({ resetCode, children }: Props) => {
     [toGrafana]
   );
 
+  const mfaOtpVerify = useCallback(
+    (formModel: MFAOTPVerifyFormModel) => {
+      if (!mfaOtpToken) {
+        setLoginErrorMessage(t('login.error.unknown', 'Unknown error occurred'));
+        return;
+      }
+
+      setLoginErrorMessage(undefined);
+      setIsLoggingIn(true);
+
+      getBackendSrv()
+        .post<LoginDTO>(
+          '/api/login/otp/verify',
+          { otpToken: mfaOtpToken, otpCode: formModel.otpCode },
+          { showErrorAlert: false }
+        )
+        .then((result) => {
+          setResult(result);
+          toGrafana();
+        })
+        .catch((err) => {
+          const fetchErrorMessage = isFetchError(err) ? getErrorMessage(err) : undefined;
+          setIsLoggingIn(false);
+          setLoginErrorMessage(fetchErrorMessage || t('login.error.unknown', 'Unknown error occurred'));
+        });
+    },
+    [mfaOtpToken, toGrafana]
+  );
+
   const { loginHint, passwordHint, disableLoginForm, disableUserSignUp } = config;
 
   return (
@@ -194,7 +245,10 @@ export const LoginCtrl = memo(({ resetCode, children }: Props) => {
         login,
         passwordlessStart,
         passwordlessConfirm,
+        mfaOtpVerify,
         showPasswordlessConfirmation: showPasswordlessConfirmation(),
+        showMfaOtp,
+        mfaOtpEmail,
         isLoggingIn,
         changePassword,
         skipPasswordChange: toGrafana,
@@ -221,6 +275,10 @@ function getErrorMessage(err: FetchError<undefined | { messageId?: string; messa
         'login.error.blocked',
         'You have exceeded the number of login attempts for this user. Please try again later.'
       );
+    case 'mfa-otp.invalid.code':
+      return t('login.error.invalid-otp', 'Invalid verification code');
+    case 'mfa-otp.expired':
+      return t('login.error.expired-otp', 'Verification code has expired. Please log in again.');
     default:
       return err.data?.message;
   }

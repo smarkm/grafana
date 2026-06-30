@@ -35,6 +35,14 @@ func (m *MockService) Login(ctx context.Context, client string, r *authn.Request
 	panic("unimplemented")
 }
 
+func (m *MockService) AuthenticateClient(ctx context.Context, client string, r *authn.Request) (*authn.Identity, error) {
+	panic("unimplemented")
+}
+
+func (m *MockService) CreateLoginSession(ctx context.Context, identity *authn.Identity, r *authn.Request) (*authn.Identity, error) {
+	panic("unimplemented")
+}
+
 func (m *MockService) RedirectURL(ctx context.Context, client string, r *authn.Request) (*authn.Redirect, error) {
 	panic("unimplemented")
 }

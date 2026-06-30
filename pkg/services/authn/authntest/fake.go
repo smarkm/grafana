@@ -119,6 +119,14 @@ func (f *FakeService) Login(ctx context.Context, client string, r *authn.Request
 	return f.ExpectedIdentity, f.ExpectedErr
 }
 
+func (f *FakeService) AuthenticateClient(ctx context.Context, client string, r *authn.Request) (*authn.Identity, error) {
+	return f.ExpectedIdentity, f.ExpectedErr
+}
+
+func (f *FakeService) CreateLoginSession(ctx context.Context, identity *authn.Identity, r *authn.Request) (*authn.Identity, error) {
+	return f.ExpectedIdentity, f.ExpectedErr
+}
+
 func (f *FakeService) RegisterPostLoginHook(hook authn.PostLoginHookFn, priority uint) {}
 
 func (f *FakeService) RedirectURL(ctx context.Context, client string, r *authn.Request) (*authn.Redirect, error) {

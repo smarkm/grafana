@@ -17,6 +17,7 @@ import { LoginLayout, InnerBox } from './LoginLayout';
 import { LoginServiceButtons } from './LoginServiceButtons';
 import { PasswordlessConfirmation } from './PasswordlessConfirmationForm';
 import { PasswordlessLoginForm } from './PasswordlessLoginForm';
+import { MFAOTPConfirmation } from './MFAOTPConfirmationForm';
 import { UserSignup } from './UserSignup';
 
 const LoginPage = () => {
@@ -36,6 +37,9 @@ const LoginPage = () => {
           passwordlessStart,
           passwordlessConfirm,
           showPasswordlessConfirmation,
+          mfaOtpVerify,
+          showMfaOtp,
+          mfaOtpEmail,
           isLoggingIn,
           changePassword,
           skipPasswordChange,
@@ -44,7 +48,18 @@ const LoginPage = () => {
           loginErrorMessage,
         }) => (
           <LoginLayout isChangingPassword={isChangingPassword}>
-            {!isChangingPassword && !showPasswordlessConfirmation && (
+            {showMfaOtp && (
+              <InnerBox>
+                {loginErrorMessage && (
+                  <Alert className={styles.alert} severity="error" title={t('login.error.title', 'Login failed')}>
+                    {loginErrorMessage}
+                  </Alert>
+                )}
+                <MFAOTPConfirmation email={mfaOtpEmail} onSubmit={mfaOtpVerify} isLoggingIn={isLoggingIn} />
+              </InnerBox>
+            )}
+
+            {!isChangingPassword && !showPasswordlessConfirmation && !showMfaOtp && (
               <InnerBox>
                 {loginErrorMessage && (
                   <Alert className={styles.alert} severity="error" title={t('login.error.title', 'Login failed')}>
@@ -81,7 +96,7 @@ const LoginPage = () => {
             )}
 
             {config.auth.passwordlessEnabled && showPasswordlessConfirmation && (
-              <InnerBox>
+              <InnerBox> 
                 <PasswordlessConfirmation
                   onSubmit={passwordlessConfirm}
                   isLoggingIn={isLoggingIn}

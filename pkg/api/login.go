@@ -239,6 +239,10 @@ func (hs *HTTPServer) LoginAPIPing(c *contextmodel.ReqContext) response.Response
 }
 
 func (hs *HTTPServer) LoginPost(c *contextmodel.ReqContext) response.Response {
+	if hs.Cfg.MFAEmailOTP.Enabled {
+		return hs.loginPostWithMFA(c)
+	}
+
 	identity, err := hs.authnService.Login(c.Req.Context(), authn.ClientForm, &authn.Request{HTTPRequest: c.Req})
 	if err != nil {
 		tokenErr := &auth.CreateTokenErr{}
@@ -249,7 +253,7 @@ func (hs *HTTPServer) LoginPost(c *contextmodel.ReqContext) response.Response {
 	}
 
 	metrics.MApiLoginPost.Inc()
-	return authn.HandleLoginResponse(c.Req, c.Resp, hs.Cfg, identity, hs.ValidateRedirectTo, hs.Features)
+	return hs.completeLoginWithUserRelationship(c, identity)
 }
 
 func (hs *HTTPServer) LoginPasswordless(c *contextmodel.ReqContext) response.Response {
@@ -261,7 +265,7 @@ func (hs *HTTPServer) LoginPasswordless(c *contextmodel.ReqContext) response.Res
 		}
 		return response.Err(err)
 	}
-	return authn.HandleLoginResponse(c.Req, c.Resp, hs.Cfg, identity, hs.ValidateRedirectTo, hs.Features)
+	return hs.completeLoginWithUserRelationship(c, identity)
 }
 
 func (hs *HTTPServer) StartPasswordless(c *contextmodel.ReqContext) {
@@ -293,7 +297,9 @@ func (hs *HTTPServer) loginUserWithUser(user *user.User, c *contextmodel.ReqCont
 	c.UserToken = userToken
 
 	hs.log.Info("Successful Login", "User", user.Email)
+	originalSessionKey := hs.sessionKey(c)
 	authn.WriteSessionCookie(c.Resp, hs.Cfg, userToken)
+	hs.bindCustomerIDs(c.Req.Context(), user.Login, originalSessionKey, userToken.UnhashedToken)
 	return nil
 }
 

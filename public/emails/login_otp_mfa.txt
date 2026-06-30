@@ -1,0 +1,13 @@
+{{HiddenSubject .Subject "Your Grafana login verification code"}}
+
+Hi,
+
+Your Grafana login verification code is:
+
+{{.OTPCode}}
+
+This code will expire in {{.Expire}} minutes.
+
+If you did not attempt to log in, you can ignore this email.
+
+Sent by Grafana v{{.BuildVersion}} (c) {{now | date "2006"}} Grafana Labs

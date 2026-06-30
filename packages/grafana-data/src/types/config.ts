@@ -383,6 +383,7 @@ export interface AuthSettings {
 
   disableLogin?: boolean;
   passwordlessEnabled?: boolean;
+  mfaEmailOtpEnabled?: boolean;
   basicAuthStrongPasswordPolicy?: boolean;
   disableSignoutMenu?: boolean;
 }

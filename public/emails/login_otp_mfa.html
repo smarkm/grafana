@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="und" dir="auto">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>{{ Subject .Subject .TemplateData "Your Grafana login verification code" }}</title>
+</head>
+<body style="font-family: Inter, Helvetica, Arial, sans-serif; font-size: 14px; color: #000;">
+  <h2>Your login verification code</h2>
+  <p>Use the code below to complete your Grafana login. This code will expire in {{ .Expire }} minutes.</p>
+  <p style="font-size: 22px; font-weight: bold; letter-spacing: 2px;">{{ .OTPCode }}</p>
+  <p>If you did not attempt to log in, you can ignore this email.</p>
+  <p>&copy; {{ now | date "2006" }} Grafana Labs. Sent by <a href="{{ .AppUrl }}">Grafana v{{ .BuildVersion }}</a>.</p>
+</body>
+</html>

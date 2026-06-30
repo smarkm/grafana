@@ -436,6 +436,10 @@ func (hs *HTTPServer) getFrontendSettings(c *contextmodel.ReqContext) (*dtos.Fro
 		}
 	}
 
+	if hs.Cfg.MFAEmailOTP.Enabled && hs.Cfg.Smtp.Enabled {
+		frontendSettings.Auth.MFAEmailOTPEnabled = true
+	}
+
 	if hs.pluginsCDNService != nil && hs.pluginsCDNService.IsEnabled() {
 		cdnBaseURL, err := hs.pluginsCDNService.BaseURL()
 		if err != nil {

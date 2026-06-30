@@ -232,6 +232,18 @@ func (hs *HTTPServer) registerRoutes() {
 		r.Post("/api/login/passwordless/authenticate", requestmeta.SetOwner(requestmeta.TeamAuth), quota(string(auth.QuotaTargetSrv)), routing.Wrap(hs.LoginPasswordless))
 	}
 
+	if hs.Cfg.MFAEmailOTP.Enabled {
+		r.Post("/api/login/otp/verify", requestmeta.SetOwner(requestmeta.TeamAuth), quota(string(auth.QuotaTargetSrv)), routing.Wrap(hs.LoginOTPVerify))
+	}
+
+	r.Get("/switchUser/:userId", reqSignedIn, routing.Wrap(hs.SwitchUser))
+	r.Post("/api/user-relationship/save", reqGrafanaAdmin, routing.Wrap(hs.SaveUserRelationshipHandler))
+	r.Put("/api/user-relationship/update", reqGrafanaAdmin, routing.Wrap(hs.UpdateUserRelationshipHandler))
+	r.Delete("/api/user-relationship/delete/:superId", reqGrafanaAdmin, routing.Wrap(hs.DeleteUserRelationshipHandler))
+	r.Get("/api/user-relationship/all", reqSignedIn, routing.Wrap(hs.QueryAllUserRelationshipsHandler))
+	r.Get("/api/user-relationship/bySuperId", reqSignedIn, routing.Wrap(hs.QueryUserRelationshipBySuperIDHandler))
+	r.Post("/api/user-relationship/import", reqGrafanaAdmin, routing.Wrap(hs.ImportUserRelastionShipData))
+
 	// invited
 	r.Get("/api/user/invite/:code", routing.Wrap(hs.GetInviteInfoByCode))
 	r.Post("/api/user/invite/complete", routing.Wrap(hs.CompleteInvite))

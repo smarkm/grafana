@@ -111,6 +111,10 @@ type Service interface {
 	RegisterPostAuthHook(hook PostAuthHookFn, priority uint)
 	// Login authenticates a request and creates a session on successful authentication.
 	Login(ctx context.Context, client string, r *Request) (*Identity, error)
+	// AuthenticateClient authenticates a request using a specific client without creating a session.
+	AuthenticateClient(ctx context.Context, client string, r *Request) (*Identity, error)
+	// CreateLoginSession creates a session for an already authenticated identity.
+	CreateLoginSession(ctx context.Context, identity *Identity, r *Request) (*Identity, error)
 	// RegisterPostLoginHook registers a hook that that is called after a login request.
 	// A lower number means higher priority.
 	RegisterPostLoginHook(hook PostLoginHookFn, priority uint)
