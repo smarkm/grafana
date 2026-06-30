@@ -221,7 +221,12 @@ export const ProvisioningWizard = memo(function ProvisioningWizard({
               <ProvisioningAlert error={stepStatusInfo.error} action={stepStatusInfo.action} />
             )}
             {'warning' in stepStatusInfo && stepStatusInfo.warning && (
-              <ProvisioningAlert warning={stepStatusInfo.warning} />
+              <ProvisioningAlert
+                warning={stepStatusInfo.warning}
+                // Only attach the action to standalone warnings; an 'error' status may also
+                // carry a warning + a retry action meant for the error alert, not this one.
+                action={stepStatusInfo.status === 'warning' ? stepStatusInfo.action : undefined}
+              />
             )}
             {isStepSuccess && 'success' in stepStatusInfo && <ProvisioningAlert success={stepStatusInfo.success} />}
 
@@ -282,7 +287,6 @@ const getStyles = (theme: GrafanaTheme2) => ({
     width: 1,
     alignSelf: 'stretch',
     backgroundColor: theme.colors.border.weak,
-
     marginBottom: theme.spacing(13), // align with the button row
   }),
   stepperSpacer: css({
@@ -292,6 +296,5 @@ const getStyles = (theme: GrafanaTheme2) => ({
     borderBottom: `1px solid ${theme.colors.border.weak}`,
     paddingBottom: theme.spacing(4),
     marginBottom: theme.spacing(4),
-    overflowX: 'auto',
   }),
 });

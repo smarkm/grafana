@@ -120,7 +120,7 @@ export const DashboardInteractions = {
 
   // dashboards_new_section_variable_type_selected
   // when a user selects a variable type when creating a new section (row/tab) variable
-  sectionVariableTypeSelected: (properties: { type: string }) => {
+  sectionVariableTypeSelected: (properties: { type: string; sectionOwner: 'row' | 'tab' | undefined }) => {
     reportDashboardInteraction('new_section_variable_type_selected', properties);
   },
 
@@ -134,6 +134,12 @@ export const DashboardInteractions = {
   // when a user drags and drops a variable in the content outline
   variablesReordered: (properties: { source: 'edit_pane' }) => {
     reportDashboardInteraction('variables_reordered', properties);
+  },
+
+  // dashboards_variable_value_changed
+  // when a user changes a variable value from dashboard controls, the controls menu, or a section
+  variableValueChanged: (properties: { type: string }) => {
+    reportDashboardInteraction('variable_value_changed', properties);
   },
 
   // dashboards_add_annotation_button_clicked
